@@ -17,6 +17,14 @@ from pathlib import Path
 from docforge.agents.answer import AnswerAgent
 from docforge.agents.deck_planner import DeckPlannerAgent, PlannerInput
 from docforge.agents.doc_writer import DocumentInput, write_document
+from docforge.agents.editor import (
+    SectionEditorAgent,
+    SectionEditorInput,
+    SheetEditorAgent,
+    SheetEditorInput,
+    SlideEditorAgent,
+    SlideEditorInput,
+)
 from docforge.agents.interpreter import InterpreterAgent, render_input
 from docforge.agents.workbook_planner import WorkbookInput, WorkbookPlannerAgent
 from docforge.container import Container
@@ -36,11 +44,26 @@ from docforge.media.images import resolve_deck_images, resolve_document_images
 from docforge.models.artifact import Artifact, ArtifactVersion
 from docforge.models.conversation import FileRole, Message, Role, Session, Task, TaskStatus
 from docforge.models.evidence import ResearchDossier
-from docforge.models.intent import Interpretation, OutputFormat, RequestKind, ResearchDepth
-from docforge.models.ir import DeckPlan, ImageBlock
+from docforge.models.intent import (
+    ChangeOperation,
+    Interpretation,
+    OutputFormat,
+    RequestKind,
+    ResearchDepth,
+    ScopeLevel,
+)
+from docforge.models.ir import ArtifactIR, DeckPlan, DocumentPlan, ImageBlock, WorkbookPlan
 from docforge.models.quality import QualityReport, Severity, Verdict
 from docforge.models.template import TemplateManifest
-from docforge.orchestrator.context import build_interpreter_input
+from docforge.orchestrator.context import artifact_outline, build_interpreter_input
+from docforge.orchestrator.patch import (
+    apply_remove_unit,
+    apply_restyle,
+    apply_section_edit,
+    apply_sheet_edit,
+    apply_slide_edit,
+)
+from docforge.orchestrator.targets import resolve_targets
 from docforge.render.pptx.preview import render_previews
 from docforge.research.pipeline import ResearchService, UserSource, evidence_digest
 from docforge.research.search import UnavailableSearchProvider
@@ -51,7 +74,7 @@ from docforge.validate.common import CheckRun
 from docforge.validate.deck import build_deck
 from docforge.validate.document import build_document
 from docforge.validate.plan_checks import check_deck_plan
-from docforge.validate.workbook import build_workbook
+from docforge.validate.workbook import build_workbook, extract_workbook_diagnostics
 
 log = get_logger(__name__)
 
@@ -170,17 +193,24 @@ class GenerationService:
         current = self.repos.tasks.get(session.active_task_id) if session.active_task_id else None
         if interp.kind == RequestKind.question:
             return await self._answer(session, message, interp)
-        if interp.kind in (RequestKind.modify_artifact, RequestKind.regenerate) and current is not None:
-            # Targeted editing is not built yet: apply the change by regenerating with it included.
-            update: dict = {"output_spec": interp.output_spec or current.output_spec}
-            if interp.kind == RequestKind.modify_artifact:
-                instruction = interp.change.instruction if interp.change else message.content
-                update.update(
-                    kind=RequestKind.regenerate,
-                    objective=f"{current.objective} Requested change: {instruction}",
-                )
-                self._change_note = instruction
-            interp = interp.model_copy(update=update)
+        if interp.kind == RequestKind.modify_artifact and current is not None and current.artifact_id:
+            return await self._edit_artifact(session, message, interp, current)
+        if interp.kind == RequestKind.modify_artifact and (current is None or not current.artifact_id):
+            return self._say(
+                session,
+                "There is no active document to edit. What would you like to create?",
+                interp,
+            )
+        if interp.kind == RequestKind.regenerate and current is not None:
+            instruction = message.content
+            interp = interp.model_copy(
+                update={
+                    "output_spec": interp.output_spec or current.output_spec,
+                    "kind": RequestKind.regenerate,
+                    "objective": f"{current.objective} Requested change: {instruction}",
+                }
+            )
+            self._change_note = instruction
 
         needs_clarification = interp.confidence < self.c.settings.clarify_threshold or (
             interp.clarification_questions and interp.output_spec is None
@@ -213,6 +243,285 @@ class GenerationService:
         if answer.suggestions:
             text += "\n\nYou could ask: " + " · ".join(f"“{x}”" for x in answer.suggestions[:3])
         return self._say(session, text, interp, task=task)
+
+    # ---------------------------------------------------------------- targeted editing
+
+    async def _edit_artifact(
+        self, session: Session, message: Message, interp: Interpretation, current: Task
+    ) -> Reply:
+        """Edit an existing deliverable by updating only the targeted unit(s) in its IR."""
+        artifact = self.repos.artifacts.get(current.artifact_id) if current.artifact_id else None
+        if artifact is None or not artifact.current_version:
+            return self._say(
+                session,
+                "There is no active deliverable in this session to edit. What would you like to create?",
+                interp,
+                task=current,
+            )
+
+        base_version = self.repos.artifact_versions.get(f"{artifact.id}:v{artifact.current_version}")
+        if base_version is None:
+            return self._say(
+                session,
+                "Could not find the previous version of the deliverable to edit.",
+                interp,
+                task=current,
+            )
+
+        base_ir = base_version.ir
+        instruction = (interp.change.instruction if interp.change else None) or message.content
+        outline = artifact_outline(base_ir)
+        dossier = self.repos.dossiers.get(current.dossier_id) if current.dossier_id else None
+
+        # 1. Deterministic restyle
+        if interp.change and (
+            interp.change.operation == ChangeOperation.restyle
+            or interp.change.scope.level == ScopeLevel.style
+        ):
+            self._step("restyle", "Applying styling changes")
+            new_ir, _patch = apply_restyle(
+                base_ir,
+                interp.change.style_changes,
+                instruction=instruction,
+                base_version=base_version.version,
+            )
+            return await self._render_and_persist_edit(
+                session, current, artifact, base_version, new_ir, interp, instruction, "restyle"
+            )
+
+        # 2. Unit removal
+        if interp.change and interp.change.operation == ChangeOperation.remove:
+            target_res = resolve_targets(base_ir, interp.change, message.content)
+            if target_res.targets:
+                target = target_res.targets[0]
+                self._step("remove", f"Removing {target.kind} {target.label}")
+                new_ir, _patch = apply_remove_unit(
+                    base_ir, target.unit_id, instruction=instruction, base_version=base_version.version
+                )
+                return await self._render_and_persist_edit(
+                    session,
+                    current,
+                    artifact,
+                    base_version,
+                    new_ir,
+                    interp,
+                    instruction,
+                    f"removed {target.label}",
+                )
+
+        # 3. Target resolution for edits
+        target_res = resolve_targets(base_ir, interp.change, message.content)
+        if target_res.clarification_needed or not target_res.targets:
+            q = target_res.clarification_question or "Which slide, section, or sheet would you like to edit?"
+            opts = target_res.options or [label for _, label in outline[:6]]
+            task = self._task_for(session, interp, status=TaskStatus.awaiting_clarification)
+            prompt = q + (" (e.g. " + ", ".join(opts[:4]) + ")" if opts else "")
+            return self._say(session, prompt, interp, task=task)
+
+        target = target_res.targets[0]
+        self._step("edit", f"Editing {target.kind} “{target.label}”")
+
+        if isinstance(base_ir, DeckPlan):
+            slide = next((s for s in base_ir.slides if s.id == target.unit_id), None)
+            if slide is None:
+                return self._say(
+                    session, f"Slide '{target.unit_id}' was not found in the deck.", interp, task=current
+                )
+            editor = SlideEditorAgent(self.c.llm)
+            edited_slide = await editor.run(
+                SlideEditorInput(
+                    slide=slide,
+                    instruction=instruction,
+                    outline=outline,
+                    evidence_digest=evidence_digest(dossier) if dossier else None,
+                )
+            )
+            new_ir, _patch = apply_slide_edit(
+                base_ir, edited_slide, instruction=instruction, base_version=base_version.version
+            )
+            target_desc = f"slide “{edited_slide.headline}”"
+
+        elif isinstance(base_ir, DocumentPlan):
+            sec = next((s for s in base_ir.all_sections() if s.id == target.unit_id), None)
+            if sec is None:
+                return self._say(
+                    session,
+                    f"Section '{target.unit_id}' was not found in the document.",
+                    interp,
+                    task=current,
+                )
+            editor = SectionEditorAgent(self.c.llm)
+            edited_sec = await editor.run(
+                SectionEditorInput(
+                    section=sec,
+                    instruction=instruction,
+                    outline=outline,
+                    evidence_digest=evidence_digest(dossier) if dossier else None,
+                )
+            )
+            new_ir, _patch = apply_section_edit(
+                base_ir, edited_sec, instruction=instruction, base_version=base_version.version
+            )
+            target_desc = f"section “{edited_sec.heading}”"
+
+        elif isinstance(base_ir, WorkbookPlan):
+            sheet = next((s for s in base_ir.sheets if s.id == target.unit_id), None)
+            if sheet is None:
+                return self._say(
+                    session, f"Sheet '{target.unit_id}' was not found in the workbook.", interp, task=current
+                )
+            editor = SheetEditorAgent(self.c.llm)
+            nr_summary = ", ".join(f"'{nr.name}' ({nr.ref})" for nr in base_ir.named_ranges)
+            edited_sheet = await editor.run(
+                SheetEditorInput(
+                    sheet=sheet,
+                    instruction=instruction,
+                    outline=outline,
+                    named_ranges_summary=nr_summary,
+                )
+            )
+            new_ir, _patch = apply_sheet_edit(
+                base_ir, edited_sheet, instruction=instruction, base_version=base_version.version
+            )
+            target_desc = f"sheet “{edited_sheet.name}”"
+
+        else:
+            return self._say(
+                session,
+                "Targeted editing is not supported for this deliverable format.",
+                interp,
+                task=current,
+            )
+
+        return await self._render_and_persist_edit(
+            session, current, artifact, base_version, new_ir, interp, instruction, target_desc
+        )
+
+    async def _render_and_persist_edit(
+        self,
+        session: Session,
+        task: Task,
+        artifact: Artifact,
+        base_version: ArtifactVersion,
+        new_ir: ArtifactIR,
+        interp: Interpretation,
+        instruction: str,
+        target_desc: str,
+    ) -> Reply:
+        settings = self.c.settings
+        version_no = artifact.current_version + 1
+        spec = interp.output_spec or task.output_spec
+        dossier = self.repos.dossiers.get(task.dossier_id) if task.dossier_id else None
+        tokens = base_version.design_tokens
+
+        with tempfile.TemporaryDirectory(dir=settings.storage_dir) as tmp:
+            self._step("render", "Re-rendering deliverable with your changes")
+            if isinstance(new_ir, DeckPlan):
+                template = self._template_path(session, "pptx")
+                manifest = self._pptx_manifest(template) if template else None
+                build = await asyncio.to_thread(
+                    build_deck,
+                    new_ir,
+                    tokens,
+                    Path(tmp),
+                    spec=spec,
+                    dossier=dossier,
+                    max_iterations=settings.max_repair_iterations,
+                    libreoffice=settings.find_libreoffice(),
+                    artifact_id=artifact.id,
+                    version=version_no,
+                    asset_resolver=self.c.blobs.resolve,
+                    template=template,
+                    manifest=manifest,
+                )
+                previews = await asyncio.to_thread(self._previews, build.path, Path(tmp) / "png")
+                total_units = len(new_ir.slides)
+                unit_name = "slides"
+            elif isinstance(new_ir, DocumentPlan):
+                template = self._template_path(session, "docx")
+                build = await asyncio.to_thread(
+                    build_document,
+                    new_ir,
+                    tokens,
+                    Path(tmp),
+                    spec=spec,
+                    dossier=dossier,
+                    libreoffice=settings.find_libreoffice(),
+                    template=template,
+                    audience=spec.audience if spec else "general professional audience",
+                    artifact_id=artifact.id,
+                    version=version_no,
+                    asset_resolver=self.c.blobs.resolve,
+                )
+                previews = []
+                total_units = len(new_ir.all_sections())
+                unit_name = "sections"
+            elif isinstance(new_ir, WorkbookPlan):
+                datasets = {
+                    f.id: load_dataset(f.id, f.filename, self.c.blobs.get(f.blob_path).read())
+                    for f in self.repos.files.list_by_parent(session.id)
+                    if f.role == FileRole.dataset
+                }
+                build = await asyncio.to_thread(
+                    build_workbook,
+                    new_ir,
+                    tokens,
+                    Path(tmp),
+                    datasets=datasets,
+                    dossier=dossier,
+                    libreoffice=settings.find_libreoffice(),
+                    artifact_id=artifact.id,
+                    version=version_no,
+                )
+                previews = []
+                total_units = len(new_ir.sheets)
+                unit_name = "sheets"
+            else:
+                raise ValueError(f"Unknown IR format: {type(new_ir)}")
+
+            blob = self.c.blobs.put_file(build.path)
+
+        self.repos.quality_reports.put(build.report)
+        version = self.repos.add_artifact_version(
+            ArtifactVersion(
+                artifact_id=artifact.id,
+                version=version_no,
+                parent_version=base_version.version,
+                ir=new_ir,
+                design_tokens=tokens,
+                blob_path=blob.path,
+                preview_paths=previews,
+                change_summary=instruction,
+                quality_report_id=build.report.id,
+                dossier_id=dossier.id if dossier else None,
+            )
+        )
+        task.status = TaskStatus.delivered
+        self.repos.tasks.put(task)
+
+        if target_desc == "restyle":
+            reply_text = (
+                f"Applied styling changes: “{instruction}”. "
+                f"Content across all {total_units} {unit_name} was preserved. Delivered Version {version_no}."
+            )
+        elif target_desc.startswith("removed"):
+            reply_text = (
+                f"Applied your change: {target_desc}. "
+                f"All other {total_units} {unit_name} remain unchanged. Delivered Version {version_no}."
+            )
+        else:
+            other = max(0, total_units - 1)
+            reply_text = (
+                f"Applied your change to {target_desc}: “{instruction}”. "
+                f"All other {other} {unit_name} remain unchanged. Delivered Version {version_no}."
+            )
+
+        reply = self._say(session, reply_text, interp, task=task)
+        reply.artifact = self.repos.artifacts.require(artifact.id)
+        reply.version = version
+        reply.report = build.report
+        reply.dossier = dossier
+        return reply
 
     # ---------------------------------------------------------------- deck generation
 
@@ -525,22 +834,34 @@ class GenerationService:
                     artifact_id=artifact.id,
                     version=version_no,
                 )
-                blocking = [f.message for f in build.report.findings if f.severity == Severity.critical]
-                if blocking:  # one corrective round: the planner sees the recalculated errors
-                    log.info("workbook has %d blocking problems; asking planner to revise", len(blocking))
-                    plan = await planner.revise(wb_input, plan, blocking[:10])
-                    build = await asyncio.to_thread(
+                for iteration in range(min(settings.max_repair_iterations, 3)):
+                    diagnostics = extract_workbook_diagnostics(plan, build)
+                    if not diagnostics:
+                        break
+                    log.info(
+                        "workbook repair iteration %d: %d problems; asking planner to revise",
+                        iteration + 1,
+                        len(diagnostics),
+                    )
+                    self._step("repair", f"Fixing formulas and recalculating (attempt {iteration + 1})")
+                    revised_plan = await planner.revise(wb_input, plan, diagnostics[:12])
+                    retry_build = await asyncio.to_thread(
                         build_workbook,
-                        plan,
+                        revised_plan,
                         tokens,
-                        Path(tmp) / "r1",
+                        Path(tmp) / f"r{iteration + 1}",
                         datasets=datasets,
                         dossier=usable,
                         libreoffice=settings.find_libreoffice(),
                         artifact_id=artifact.id,
                         version=version_no,
                     )
-                    build.report.iterations = 1
+                    retry_build.report.iterations = iteration + 1
+                    if retry_build.report.summary.unresolved <= build.report.summary.unresolved:
+                        plan = revised_plan
+                        build = retry_build
+                    else:
+                        break
                 blob = self.c.blobs.put_file(build.path)
             self.repos.quality_reports.put(build.report)
             version = self.repos.add_artifact_version(

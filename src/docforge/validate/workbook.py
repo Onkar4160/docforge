@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openpyxl import load_workbook
-from openpyxl.utils.cell import range_boundaries
+from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, range_boundaries
 
 from docforge.core.ids import new_id
 from docforge.ingest.datasets import Dataset
@@ -246,3 +246,69 @@ def build_workbook(
         findings=findings,
     ).finalize()
     return WorkbookBuild(plan, path, report, result, computed)
+
+
+def extract_workbook_diagnostics(plan: WorkbookPlan, build: WorkbookBuild) -> list[str]:
+    """Extract actionable formula, calculation, and constraint diagnostics for LLM revision."""
+    diagnostics: list[str] = []
+    named_ranges_desc = ", ".join(f"'{nr.name}' ({nr.ref})" for nr in plan.named_ranges) or "none"
+    sheet_names = [s.name for s in plan.sheets]
+
+    # 1. Formula errors from computed cells
+    errors = {k: v for k, v in build.computed.items() if _is_error(v)}
+    for key, err_val in sorted(errors.items())[:12]:
+        sheet_part, cell_coord = key.split("!", 1)
+        sheet = next((s for s in plan.sheets if s.name.upper() == sheet_part), None)
+        sheet_name = sheet.name if sheet else sheet_part
+
+        # Find formula in plan
+        formula = None
+        if sheet:
+            for c in sheet.cells:
+                if c.ref.upper() == cell_coord:
+                    formula = c.formula
+                    break
+            if not formula:
+                for t in sheet.tables:
+                    try:
+                        col0_letter, row0 = coordinate_from_string(t.anchor)
+                        col0 = column_index_from_string(col0_letter)
+                        target_col_letter, target_row = coordinate_from_string(cell_coord)
+                        target_col = column_index_from_string(target_col_letter)
+                        col_idx = target_col - col0
+                        if 0 <= col_idx < len(t.columns):
+                            col = t.columns[col_idx]
+                            if col.formula_template:
+                                formula = col.formula_template.format(row=target_row)
+                    except Exception:
+                        pass
+
+        formula_str = f"'{formula}'" if formula else "unknown formula"
+        hint = ""
+        if str(err_val) == "#NAME?":
+            hint = (
+                f"Check function name spelling or named range. Available named ranges: {named_ranges_desc}."
+            )
+        elif str(err_val) == "#REF!":
+            hint = f"Cell or sheet reference does not exist. Sheets: {', '.join(sheet_names)}."
+        elif str(err_val) == "#DIV/0!":
+            hint = "Division by zero or empty cell; wrap with IFERROR, e.g. =IFERROR(..., 0)."
+        elif str(err_val) == "#VALUE!":
+            hint = "Data type mismatch in operation (e.g. arithmetic on text)."
+
+        msg = (
+            f"formula errors on '{sheet_name}': Cell {cell_coord} with formula "
+            f"{formula_str} evaluated to {err_val}. {hint}"
+        ).strip()
+        diagnostics.append(msg)
+
+    # 2. Hardcoded calculations and expected value checks
+    for f in build.report.findings:
+        if (
+            f.check_id in ("xlsx.hardcoded_calcs", "xlsx.expected_values", "xlsx.chart_ranges")
+            and f.severity in (Severity.critical, Severity.major)
+            and f.message not in diagnostics
+        ):
+            diagnostics.append(f.message)
+
+    return diagnostics

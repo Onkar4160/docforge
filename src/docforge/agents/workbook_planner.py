@@ -27,7 +27,9 @@ style_role: label, input (assumptions), output (results), header, note.
 - named_ranges: one per assumption, pointing at its input cell (ref like "B3"); formulas may use the names.
 - Formulas: standard Excel functions only (SUM, AVERAGE, MIN, MAX, COUNT, COUNTIF, SUMIF, SUMPRODUCT, IF, IFERROR, \
 ROUND, INDEX, MATCH, XLOOKUP is not allowed). Quote sheet names with spaces: 'Sheet name'!A1. Never divide by a \
-cell that can be zero without IFERROR. Every reference must point at a cell that the plan fills.
+cell that can be zero without IFERROR, e.g. =IFERROR(numerator/denominator, 0). Every reference must point at an existing \
+cell filled by the plan. Table row formulas must use dynamic formula_template with {{row}}, not hardcoded static numbers. \
+Table summaries must reference the exact data range (e.g. data rows 2 to 13 -> =SUM(B2:B13)).
 - Charts: data_ref includes the header row (e.g. "B1:B13") and categories_ref the category cells (e.g. "A2:A13") on \
 the same sheet; anchor a free cell to the right of the data.
 - checks: 1-5 expected values you can compute exactly from inputs (e.g. a total of literal values).
@@ -96,8 +98,14 @@ class WorkbookPlannerAgent(Agent[WorkbookPlan]):
             ChatMessage("assistant", previous.model_dump_json()),
         ]
         feedback = (
-            "The workbook was built and recalculated. Fix these problems and return the full corrected "
-            "plan:\n- " + "\n- ".join(problems)
+            "The workbook was built and recalculated using an independent calculation engine. "
+            "Please fix the following formula and data problems, and return the complete corrected WorkbookPlan JSON:\n"
+            + "\n".join(f"- {p}" for p in problems)
+            + "\n\nKey correction requirements:\n"
+            "1. Fix every formula error (#NAME?, #REF!, #DIV/0!, #VALUE!). Ensure named ranges match defined names exactly.\n"
+            "2. Ensure all calculated table columns have formula_template using {row} (e.g. '=B{row}*C{row}'), with null in rows.\n"
+            "3. Ensure all formula references point to existing cells that are filled by the plan.\n"
+            "4. Return the full corrected WorkbookPlan."
         )
         result = await self.ask(feedback, history=history, temperature=0.2)
         return normalise(result.parsed)

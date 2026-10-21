@@ -16,7 +16,7 @@ Last updated: 2026-10-17
 | 8 PPTX | done (offline-verified) | generated designs and template mode: sample slides removed, layout per archetype, headlines in the layout's title placeholder at inherited sizes, branding re-applied, frame-relative geometry for any slide size; fidelity checks (fonts, sample residue, branding) |
 | 9 DOCX | partial | renderer (title page, TOC, exec summary, headings, lists, tables, matplotlib figures, KPI/callout boxes, images, numeric/APA/Harvard citations + references, header/footer page numbers), DOCX template reuse, checks; repair loop and page-flow checks pending |
 | 10 XLSX | done (offline-verified) | dataset ingestion with type inference/profiles, workbook planner, openpyxl renderer (README, assumptions with named ranges, formula tables, Excel tables, number formats, charts, Sources), independent recalculation with `formulas`, one corrective planner round on formula errors |
-| 11 Orchestration & editing | partial | synchronous message→deck flow with versioning (M1); job runner, editing pending |
+| 11 Orchestration & editing | done (offline-verified) | targeted editing via TargetResolver, EditorAgent (slide/section/sheet), Scope Guard, deterministic restyle, V2 persistence preserving untouched units, enhanced Excel recalculation feedback loop with rich formula diagnostics; 201 tests passed |
 | 12 QA & evaluation | planned | — |
 | 13 App delivery | planned | — |
 
@@ -85,7 +85,7 @@ Sample outputs: `eval/out/template_demo/` (deck on a corporate template), `eval/
 - Visual QA uses the built-in preview renderer (approximate); LibreOffice-based checks remain skipped on this machine.
 - Drive C: on the dev machine is full (≈0 bytes free). Tests now use `--basetemp=.pytest_tmp` on the project drive; installs need `TMP`/`TEMP` on D:. The earlier one-off SQLite `OperationalError` was most likely caused by this.
 - Semantic Scholar without a key is usually rate-limited; OpenAlex keyless allowance is small (free keys raise both).
-- Conversational editing of existing artifacts and the background job runner (Stage 11) are not built yet.
+- Conversational editing of existing artifacts (PPTX, DOCX, XLSX) is built and verified; the background job runner arrives next.
 - PPTX template mode re-applies branding pictures; repeated branding *text* on sample slides (e.g. a company name box) is not yet re-applied.
 - The preview renderer cannot resolve theme fonts for placeholder text, so template previews show a fallback font (the PPTX itself uses the theme font).
 - `formulas` takes ~9 s to import on first workbook validation.

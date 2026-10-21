@@ -225,8 +225,8 @@ async def test_unexpected_exception_still_replies(container, fake_llm):
     assert steps == ["understand", "research", "plan"]
 
 
-async def test_modify_request_regenerates_with_the_change(container, fake_llm):
-    from docforge.models.intent import ChangeOperation, ChangeRequest, ChangeScope, ScopeLevel
+async def test_modify_request_restyles_deterministically(container, fake_llm):
+    from docforge.models.intent import ChangeOperation, ChangeRequest, ChangeScope, ScopeLevel, StyleChange
 
     fake_llm.add("deck_planner", sample_deck())
     service = GenerationService(container)
@@ -237,17 +237,160 @@ async def test_modify_request_regenerates_with_the_change(container, fake_llm):
         kind=RequestKind.modify_artifact,
         fmt=None,
         change=ChangeRequest(
-            operation=ChangeOperation.restyle, scope=ChangeScope(level=ScopeLevel.style), instruction="bigger"
+            operation=ChangeOperation.restyle,
+            scope=ChangeScope(level=ScopeLevel.style),
+            instruction="change font to Georgia",
+            style_changes=[StyleChange(property="heading_font", value="Georgia")],
         ),
     )
     fake_llm._queues["interpreter"].clear()
     fake_llm.add("interpreter", modify)
     reply = await service.handle_message(
-        container.repos.sessions.require(session.id), _msg(container, "bigger")
+        container.repos.sessions.require(session.id), _msg(container, "change font to Georgia")
     )
     assert first.version.version == 1 and reply.version is not None and reply.version.version == 2
-    assert "Applied your change (“bigger”)" in reply.message.content
-    assert "Requested change: bigger" in fake_llm.calls_for("deck_planner")[-1].messages[0].content
+    assert "Applied styling changes" in reply.message.content
+    assert reply.version.ir.style.heading_font == "Georgia"
+
+
+async def test_modify_request_edits_targeted_slide(container, fake_llm):
+    from docforge.models.intent import (
+        ChangeOperation,
+        ChangeRequest,
+        ChangeScope,
+        ScopeLevel,
+        TargetKind,
+        TargetRef,
+    )
+
+    deck = sample_deck()
+    fake_llm.add("deck_planner", deck)
+    service = GenerationService(container)
+    session = _session(container)
+    fake_llm.add("interpreter", _interp())
+    await service.handle_message(session, _msg(container, "deck"))
+
+    # Prepare edited slide 2
+    target_slide = deck.slides[1]
+    edited_slide = target_slide.model_copy(update={"headline": "Brand New Headline for Slide 2"})
+    fake_llm.add("slide_editor", edited_slide)
+
+    modify = _interp(
+        kind=RequestKind.modify_artifact,
+        fmt=None,
+        change=ChangeRequest(
+            operation=ChangeOperation.rewrite,
+            scope=ChangeScope(
+                level=ScopeLevel.unit, targets=[TargetRef(kind=TargetKind.slide, locator="slide 2")]
+            ),
+            instruction="make slide 2 about market size",
+        ),
+    )
+    fake_llm._queues["interpreter"].clear()
+    fake_llm.add("interpreter", modify)
+    reply = await service.handle_message(
+        container.repos.sessions.require(session.id), _msg(container, "make slide 2 about market size")
+    )
+    assert reply.version is not None and reply.version.version == 2
+    assert "Applied your change to slide “Brand New Headline for Slide 2”" in reply.message.content
+    # Untouched slides remain identical
+    assert reply.version.ir.slides[0] == deck.slides[0]
+    assert reply.version.ir.slides[1].headline == "Brand New Headline for Slide 2"
+    assert reply.version.ir.slides[2:] == deck.slides[2:]
+
+
+async def test_modify_request_edits_targeted_document_section(container, fake_llm):
+    from docforge.models.intent import (
+        ChangeOperation,
+        ChangeRequest,
+        ChangeScope,
+        ScopeLevel,
+        TargetKind,
+        TargetRef,
+    )
+    from tests.fixtures.documents import outline, written
+
+    fake_llm.add("interpreter", _interp(fmt=OutputFormat.docx))
+    fake_llm.add("doc_outliner", outline())
+    for w in written():
+        fake_llm.add("section_writer", w)
+
+    service = GenerationService(container)
+    session = _session(container)
+    first = await service.handle_message(session, _msg(container, "report"))
+    assert first.version.version == 1
+
+    orig_doc = first.version.ir
+    target_sec = orig_doc.sections[0]
+    edited_sec = target_sec.model_copy(update={"heading": "Updated Evidence Section"})
+    fake_llm.add("section_editor", edited_sec)
+
+    modify = _interp(
+        kind=RequestKind.modify_artifact,
+        fmt=None,
+        change=ChangeRequest(
+            operation=ChangeOperation.rewrite,
+            scope=ChangeScope(
+                level=ScopeLevel.unit, targets=[TargetRef(kind=TargetKind.section, locator="section 1")]
+            ),
+            instruction="rename section 1",
+        ),
+    )
+    fake_llm._queues["interpreter"].clear()
+    fake_llm.add("interpreter", modify)
+    reply = await service.handle_message(
+        container.repos.sessions.require(session.id), _msg(container, "rename section 1")
+    )
+    assert reply.version is not None and reply.version.version == 2
+    assert "Applied your change to section “Updated Evidence Section”" in reply.message.content
+    assert reply.version.ir.sections[0].heading == "Updated Evidence Section"
+    assert reply.version.ir.sections[1:] == orig_doc.sections[1:]
+
+
+async def test_modify_request_edits_targeted_workbook_sheet(container, fake_llm):
+    from docforge.models.intent import (
+        ChangeOperation,
+        ChangeRequest,
+        ChangeScope,
+        ScopeLevel,
+        TargetKind,
+        TargetRef,
+    )
+    from tests.fixtures.workbooks import saas_model
+
+    fake_llm.add("interpreter", _interp(fmt=OutputFormat.xlsx))
+    fake_llm.add("workbook_planner", saas_model())
+
+    service = GenerationService(container)
+    session = _session(container)
+    first = await service.handle_message(session, _msg(container, "model"))
+    assert first.version.version == 1
+
+    orig_wb = first.version.ir
+    target_sheet = orig_wb.sheets[0]
+    edited_sheet = target_sheet.model_copy(update={"description": "Updated SaaS Assumptions"})
+    fake_llm.add("sheet_editor", edited_sheet)
+
+    modify = _interp(
+        kind=RequestKind.modify_artifact,
+        fmt=None,
+        change=ChangeRequest(
+            operation=ChangeOperation.rewrite,
+            scope=ChangeScope(
+                level=ScopeLevel.unit, targets=[TargetRef(kind=TargetKind.sheet, locator="sheet 1")]
+            ),
+            instruction="update description of assumptions",
+        ),
+    )
+    fake_llm._queues["interpreter"].clear()
+    fake_llm.add("interpreter", modify)
+    reply = await service.handle_message(
+        container.repos.sessions.require(session.id), _msg(container, "update description of assumptions")
+    )
+    assert reply.version is not None and reply.version.version == 2
+    assert "Applied your change to sheet “Assumptions”" in reply.message.content
+    assert reply.version.ir.sheets[0].description == "Updated SaaS Assumptions"
+    assert reply.version.ir.sheets[1:] == orig_wb.sheets[1:]
 
 
 async def test_planner_failure_marks_task_failed(container, fake_llm):
