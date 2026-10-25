@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docforge"
+version = "0.1.0"
+description = "Research-driven, template-aware generation of editable PPTX, DOCX and XLSX deliverables."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.135",
+  "uvicorn>=0.44",
+  "python-multipart>=0.0.20",
+  "pydantic>=2.12,<3",
+  "pydantic-settings>=2.15",
+  "sqlalchemy>=2.0.40,<3",
+  "python-pptx>=1.0.2",
+  "python-docx>=1.2",
+  "openpyxl>=3.1.5",
+  "lxml>=5.0",
+  "defusedxml>=0.7",
+  "pillow>=11",
+  "httpx>=0.28",
+  "pyjwt>=2.10",
+  "pypdf>=5",
+  "matplotlib>=3.9",
+  "formulas>=1.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+docforge = "docforge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+docforge = ["web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live and not visual' -ra --basetemp=.pytest_tmp"
+markers = [
+  "live: calls real external services (needs GEMINI_API_KEY / TAVILY_API_KEY / PINECONE_API_KEY)",
+  "visual: needs LibreOffice for rendering",
+  "slow: long-running tests",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+# UP046: keep explicit Generic[...] for readability alongside Pydantic generics.
+ignore = ["UP046"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Form", "fastapi.Query"]
+
+[tool.ruff.lint.per-file-ignores]
+# Agent prompts are prose; wrapping them for line length hurts readability.
+"src/docforge/agents/*.py" = ["E501"]

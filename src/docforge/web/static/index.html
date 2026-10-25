@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocForge</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b5bd6'/%3E%3Cpath d='M9 8h9l5 5v11H9z' fill='white'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f6f7fb; --panel: #ffffff; --panel-2: #f1f3f9; --fg: #1d2333; --muted: #667085; --line: #e3e7ef;
+  --accent: #5b5bd6; --accent-2: #8b5cf6; --accent-soft: #ecebff; --ok: #12805c; --ok-soft: #e3f6ee;
+  --warn: #b25e09; --warn-soft: #fdf1e1; --bad: #c0362c; --bad-soft: #fde9e7; --user: #5b5bd6; --user-fg: #fff;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 16px rgba(16,24,40,.06); --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1117; --panel: #171a23; --panel-2: #1e2230; --fg: #e6e8ef; --muted: #9aa3b5; --line: #2a2f3d;
+    --accent: #8b8bf5; --accent-2: #b08cff; --accent-soft: #252547; --ok: #4cc79a; --ok-soft: #12302a;
+    --warn: #f0a85a; --warn-soft: #33260f; --bad: #ff7b70; --bad-soft: #3a1714; --user: #4b4bc4;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1117; --panel: #171a23; --panel-2: #1e2230; --fg: #e6e8ef; --muted: #9aa3b5; --line: #2a2f3d;
+  --accent: #8b8bf5; --accent-2: #b08cff; --accent-soft: #252547; --ok: #4cc79a; --ok-soft: #12302a;
+  --warn: #f0a85a; --warn-soft: #33260f; --bad: #ff7b70; --bad-soft: #3a1714; --user: #4b4bc4;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; font: 15px/1.55 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; background: var(--bg); color: var(--fg); }
+button { font: inherit; cursor: pointer; }
+.btn { border: 0; border-radius: 10px; padding: 9px 16px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-weight: 600; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); font-weight: 500; }
+.btn.small { padding: 6px 12px; font-size: 13px; }
+.icon-btn { border: 0; background: transparent; color: var(--muted); border-radius: 8px; padding: 6px; display: inline-grid; place-items: center; }
+.icon-btn:hover { background: var(--panel-2); color: var(--fg); }
+svg { width: 18px; height: 18px; }
+
+/* ---------- login ---------- */
+#login { min-height: 100%; display: grid; place-items: center; padding: 16px;
+  background: radial-gradient(1200px 600px at 10% -10%, var(--accent-soft), transparent), var(--bg); }
+.login-card { width: 100%; max-width: 380px; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 32px; box-shadow: var(--shadow); }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; }
+.logo { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: grid; place-items: center; color: #fff; }
+.login-card p { color: var(--muted); margin: 8px 0 22px; }
+.field { display: block; margin-bottom: 14px; }
+.field span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.field input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); color: var(--fg); font: inherit; }
+.field input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+#loginError { color: var(--bad); font-size: 14px; min-height: 20px; margin-top: 8px; }
+
+/* ---------- app shell ---------- */
+#app { display: none; height: 100%; }
+#app.on { display: grid; grid-template-columns: 280px 1fr; }
+aside { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+aside header { padding: 16px; display: flex; align-items: center; justify-content: space-between; }
+#newChat { margin: 0 16px 12px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.side-label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 8px 16px; }
+#sessions { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+.sess { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 10px; cursor: pointer; color: var(--fg); }
+.sess:hover { background: var(--panel-2); }
+.sess.active { background: var(--accent-soft); }
+.sess .t { flex: 1; min-width: 0; }
+.sess .t div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+.sess .t small { color: var(--muted); font-size: 12px; }
+.sess .icon-btn { opacity: 0; }
+.sess:hover .icon-btn { opacity: 1; }
+aside footer { border-top: 1px solid var(--line); padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 13px; }
+
+main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.topbar { display: none; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+#thread { flex: 1; overflow-y: auto; padding: 24px 16px 8px; }
+.inner { max-width: 820px; margin: 0 auto; }
+
+/* empty state */
+.hero { text-align: center; padding: 6vh 8px 24px; }
+.hero h1 { font-size: 30px; margin: 14px 0 6px; letter-spacing: -.02em; }
+.hero p { color: var(--muted); margin: 0 auto; max-width: 560px; }
+.hero .logo { width: 52px; height: 52px; border-radius: 16px; margin: 0 auto; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 28px; text-align: left; }
+.suggest { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; cursor: pointer; transition: transform .12s, border-color .12s; }
+.suggest:hover { transform: translateY(-2px); border-color: var(--accent); }
+.suggest .k { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-bottom: 8px; }
+.k.pptx { background: #fde9df; color: #b5471b; } .k.docx { background: #e1ecfd; color: #1d5bbf; } .k.xlsx { background: #e0f4e8; color: #17773f; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .k.pptx { background: #3b2116; color: #ff9b6e; } :root:not([data-theme="light"]) .k.docx { background: #15253f; color: #7fb0ff; } :root:not([data-theme="light"]) .k.xlsx { background: #12301f; color: #6fdc9b; } }
+.suggest div { font-size: 14px; }
+
+/* messages */
+.msg { display: flex; gap: 12px; margin: 18px 0; }
+.msg.user { justify-content: flex-end; }
+.avatar { width: 32px; height: 32px; border-radius: 10px; flex: none; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+.bubble { max-width: min(680px, 100%); }
+.msg.user .bubble { background: var(--user); color: var(--user-fg); padding: 10px 14px; border-radius: 16px 16px 4px 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.bot .text { background: var(--panel); border: 1px solid var(--line); padding: 12px 16px; border-radius: 4px 16px 16px 16px; box-shadow: var(--shadow); white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.bot.error .text { background: var(--bad-soft); border-color: transparent; }
+.attach-line { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); color: var(--fg); }
+.chip b { font-weight: 600; }
+.chip select { border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; }
+.chip .icon-btn { padding: 0; }
+
+/* progress */
+.progress { background: var(--panel); border: 1px solid var(--line); border-radius: 4px 16px 16px 16px; padding: 14px 16px; box-shadow: var(--shadow); min-width: 280px; }
+.progress .head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 8px; }
+.progress .head small { color: var(--muted); font-weight: 400; }
+.step { display: flex; align-items: center; gap: 10px; padding: 4px 0; color: var(--muted); font-size: 14px; }
+.step.done { color: var(--fg); }
+.step.now { color: var(--fg); font-weight: 600; }
+.dot { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; flex: none; border: 2px solid var(--line); }
+.step.done .dot { background: var(--ok); border-color: var(--ok); color: #fff; }
+.step.done .dot svg { width: 12px; height: 12px; }
+.step.now .dot { border-color: var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* artifact card */
+.artifact { margin-top: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.artifact .top { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
+.ficon { width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; font-size: 12px; color: #fff; flex: none; }
+.ficon.pptx { background: linear-gradient(135deg, #e3672f, #c43e1c); } .ficon.docx { background: linear-gradient(135deg, #3b7de0, #1d5bbf); } .ficon.xlsx { background: linear-gradient(135deg, #2aa865, #17773f); }
+.artifact .meta { flex: 1; min-width: 0; }
+.artifact .meta div { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.artifact .meta small { color: var(--muted); }
+.badge { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.badge.pass { background: var(--ok-soft); color: var(--ok); } .badge.pass_with_warnings { background: var(--warn-soft); color: var(--warn); } .badge.fail { background: var(--bad-soft); color: var(--bad); }
+.thumbs { display: flex; gap: 8px; overflow-x: auto; padding: 0 16px 14px; scroll-snap-type: x mandatory; }
+.thumbs img { height: 112px; border-radius: 8px; border: 1px solid var(--line); scroll-snap-align: start; cursor: zoom-in; background: var(--panel-2); }
+.artifact .actions { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--panel-2); flex-wrap: wrap; }
+.report { padding: 0 16px 14px; font-size: 13.5px; display: none; }
+.report.on { display: block; }
+.report li { margin: 4px 0; }
+.sev { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; margin-right: 6px; text-transform: uppercase; }
+.sev.critical, .sev.major { background: var(--bad-soft); color: var(--bad); } .sev.minor, .sev.info { background: var(--panel-2); color: var(--muted); }
+
+/* composer */
+.composer-wrap { padding: 8px 16px 16px; }
+.composer { max-width: 820px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); padding: 10px 10px 10px 14px; transition: border-color .15s; }
+.composer.drag { border-color: var(--accent); border-style: dashed; }
+#staged { display: flex; flex-wrap: wrap; gap: 6px; }
+#staged:not(:empty) { margin-bottom: 8px; }
+.composer-row { display: flex; align-items: flex-end; gap: 8px; }
+textarea { flex: 1; border: 0; resize: none; background: transparent; color: var(--fg); font: inherit; min-height: 26px; max-height: 220px; padding: 6px 0; }
+textarea:focus { outline: none; }
+#send { border-radius: 12px; width: 40px; height: 40px; padding: 0; display: grid; place-items: center; }
+.hint { max-width: 820px; margin: 6px auto 0; color: var(--muted); font-size: 12px; text-align: center; }
+
+/* lightbox */
+#lightbox { position: fixed; inset: 0; background: rgba(8,10,18,.85); display: none; place-items: center; z-index: 50; padding: 24px; }
+#lightbox.on { display: grid; }
+#lightbox img { max-width: 100%; max-height: 90vh; border-radius: 10px; }
+
+@media (max-width: 860px) {
+  #app.on { grid-template-columns: 1fr; }
+  aside { position: fixed; inset: 0 auto 0 0; width: 280px; z-index: 40; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); }
+  aside.open { transform: none; }
+  .topbar { display: flex; }
+  #thread { padding: 16px 12px 8px; }
+  .composer-wrap { padding: 8px 12px 12px; }
+}
+</style>
+</head>
+<body>
+
+<section id="login">
+  <form class="login-card" id="loginForm">
+    <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h8l5 5v13H6z" opacity=".95"/><path d="M14 3v5h5" fill="none" stroke="rgba(0,0,0,.25)"/></svg></div>DocForge</div>
+    <p>Research-backed presentations, reports and spreadsheets from a conversation.</p>
+    <label class="field"><span>Username</span><input id="user" autocomplete="username" required></label>
+    <label class="field"><span>Password</span><input id="pass" type="password" autocomplete="current-password" required></label>
+    <button class="btn" style="width:100%" type="submit">Sign in</button>
+    <div id="loginError" role="alert"></div>
+  </form>
+</section>
+
+<div id="app">
+  <aside id="side">
+    <header>
+      <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h8l5 5v13H6z"/></svg></div>DocForge</div>
+      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    </header>
+    <button class="btn" id="newChat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>New chat</button>
+    <div class="side-label">Recent</div>
+    <nav id="sessions" aria-label="Chats"></nav>
+    <footer><span id="who"></span><button class="btn ghost small" id="logout">Sign out</button></footer>
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <button class="icon-btn" id="menuBtn" aria-label="Open chats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <div class="brand" style="font-size:16px">DocForge</div>
+    </div>
+    <div id="thread" aria-live="polite"><div class="inner" id="inner"></div></div>
+    <div class="composer-wrap">
+      <div class="composer" id="composer">
+        <div id="staged"></div>
+        <div class="composer-row">
+          <button class="icon-btn" id="attachBtn" title="Attach files (template, source or dataset)" aria-label="Attach files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></button>
+          <input type="file" id="file" multiple hidden accept=".pptx,.potx,.docx,.dotx,.xlsx,.xltx,.pdf,.csv,.tsv,.txt,.md">
+          <textarea id="prompt" rows="1" placeholder="Describe the presentation, report or spreadsheet you need…"></textarea>
+          <button class="btn" id="send" title="Send" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div>
+      <div class="hint">Enter to send · Shift+Enter for a new line · drop files here: a .pptx/.docx as <b>template</b>, PDFs or notes as <b>source</b>, CSV/XLSX as <b>dataset</b></div>
+    </div>
+  </main>
+</div>
+
+<div id="lightbox" role="dialog" aria-label="Slide preview"><img alt=""></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const S = { token: null, user: null, session: null, staged: [], busy: false };
+const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5 9-10"/></svg>';
+const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>';
+const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+const STEPS = [["understand", "Understanding your request"], ["research", "Researching the topic"], ["plan", "Planning the content"],
+               ["images", "Finding photos"], ["render", "Designing, rendering and checking"]];
+const SUGGESTIONS = [
+  ["pptx", "Presentation", "Create a 10-slide board update on the European EV charging market with sources"],
+  ["docx", "Word report", "Write an 8-page report on microplastics in drinking water with APA references"],
+  ["xlsx", "Excel model", "Build a 3-year SaaS revenue model with assumptions, monthly projections and charts"],
+  ["pptx", "Pitch deck", "Make a 12-slide investor pitch for an AI tutoring startup for school students"],
+];
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+                set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
+
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k === "html") e.innerHTML = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) e.append(k);
+  return e;
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers || {}, S.token ? { Authorization: `Bearer ${S.token}` } : {});
+  let r;
+  try { r = await fetch(path, opts); }
+  catch { throw new Error("Cannot reach the DocForge server. Is it running?"); }
+  if (r.status === 401 && path !== "/api/auth/login") { signOut(); throw new Error("Your session expired. Please sign in again."); }
+  if (r.status === 204) return null;
+  let body = null;
+  try { body = await r.json(); } catch {}
+  if (!r.ok) throw new Error(body && body.error ? body.error.message : `Request failed (${r.status})`);
+  return body;
+}
+const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+
+// ---------------------------------------------------------------- auth
+$("loginForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault(); $("loginError").textContent = "";
+  try {
+    const res = await api("/api/auth/login", json("POST", { username: $("user").value, password: $("pass").value }));
+    S.token = res.access_token; S.user = $("user").value; store.set("df_token", S.token); store.set("df_user", S.user);
+    await enter();
+  } catch (e) { $("loginError").textContent = e.message; }
+});
+function signOut() { S.token = null; store.set("df_token", null); $("app").classList.remove("on"); $("login").style.display = ""; }
+$("logout").onclick = signOut;
+
+async function enter() {
+  $("login").style.display = "none"; $("app").classList.add("on"); $("who").textContent = S.user || "";
+  await loadSessions();
+  const last = store.get("df_session");
+  if (last && document.querySelector(`.sess[data-id="${last}"]`)) await openSession(last); else showEmpty();
+}
+
+// ---------------------------------------------------------------- sessions
+function ago(iso) {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 60) return "just now"; if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`; return new Date(iso).toLocaleDateString();
+}
+async function loadSessions() {
+  const list = await api("/api/sessions");
+  const nav = $("sessions"); nav.innerHTML = "";
+  if (!list.length) nav.append(el("div", { class: "side-label", style: "text-transform:none" }, "No chats yet"));
+  for (const s of list) {
+    const del = el("button", { class: "icon-btn", title: "Delete chat", "aria-label": "Delete chat", html: ICON_TRASH,
+      onclick: async (ev) => { ev.stopPropagation(); if (!confirm(`Delete “${s.title}”? This cannot be undone.`)) return;
+        await api(`/api/sessions/${s.id}`, { method: "DELETE" }); if (S.session === s.id) { S.session = null; showEmpty(); } loadSessions(); } });
+    nav.append(el("div", { class: "sess" + (s.id === S.session ? " active" : ""), "data-id": s.id, onclick: () => openSession(s.id) },
+      el("div", { class: "t" }, el("div", {}, s.title), el("small", {}, ago(s.updated_at))), del));
+  }
+}
+function markActive() { document.querySelectorAll(".sess").forEach((n) => n.classList.toggle("active", n.dataset.id === S.session)); }
+$("newChat").onclick = () => { S.session = null; store.set("df_session", null); markActive(); showEmpty(); closeSide(); $("prompt").focus(); };
+
+async function openSession(id) {
+  S.session = id; store.set("df_session", id); markActive(); closeSide();
+  const data = await api(`/api/sessions/${id}`);
+  const files = Object.fromEntries(data.files.map((f) => [f.id, f]));
+  const inner = $("inner"); inner.innerHTML = "";
+  for (const m of data.messages) {
+    if (m.role === "user") addUser(m.content, (m.file_ids || []).map((f) => files[f]).filter(Boolean));
+    else addBot(m.content, m.artifact_ref);
+  }
+  if (!data.messages.length) showEmpty();
+  scrollDown();
+}
+async function ensureSession() {
+  if (!S.session) { const s = await api("/api/sessions", json("POST", { title: "New chat" })); S.session = s.id; store.set("df_session", s.id); }
+  return S.session;
+}
+
+// ---------------------------------------------------------------- rendering
+function scrollDown() { const t = $("thread"); requestAnimationFrame(() => { t.scrollTop = t.scrollHeight; }); }
+function showEmpty() {
+  const inner = $("inner"); inner.innerHTML = "";
+  const cards = el("div", { class: "cards" });
+  for (const [fmt, label, text] of SUGGESTIONS)
+    cards.append(el("div", { class: "suggest", role: "button", tabindex: "0", onclick: () => { $("prompt").value = text; autosize(); $("prompt").focus(); } },
+      el("span", { class: `k ${fmt}` }, label), el("div", {}, text)));
+  inner.append(el("div", { class: "hero" },
+    el("div", { class: "logo", html: '<svg viewBox="0 0 24 24" fill="currentColor" style="width:26px;height:26px"><path d="M6 3h8l5 5v13H6z"/></svg>' }),
+    el("h1", {}, "What should we create today?"),
+    el("p", {}, "Describe a presentation, report or spreadsheet. I research the topic, cite sources, follow your template and check the file before you download it."),
+    cards));
+}
+function addUser(text, files = []) {
+  document.querySelector(".hero")?.remove();
+  const bubble = el("div", { class: "bubble" });
+  const wrap = el("div", {});
+  if (files.length) wrap.append(el("div", { class: "attach-line" }, ...files.map((f) => el("span", { class: "chip" }, "📎 ", el("b", {}, f.filename), ` · ${f.role}`))));
+  bubble.textContent = text; wrap.append(bubble);
+  $("inner").append(el("div", { class: "msg user" }, wrap)); scrollDown();
+}
+function botShell(extraClass = "") {
+  const body = el("div", { class: "bubble" });
+  $("inner").append(el("div", { class: `msg bot ${extraClass}` }, el("div", { class: "avatar", html: '<svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px"><path d="M6 3h8l5 5v13H6z"/></svg>' }), body));
+  return body;
+}
+function addBot(text, artifact, isError = false) {
+  document.querySelector(".hero")?.remove();
+  const body = botShell(isError ? "error" : "");
+  body.append(el("div", { class: "text" }, text));
+  if (artifact) body.append(artifactCard(artifact));
+  scrollDown(); return body;
+}
+const VERDICT = { pass: "Passed all checks", pass_with_warnings: "Passed with warnings", fail: "Needs attention" };
+const UNIT = { pptx: "slides", docx: "sections", xlsx: "sheets" };
+function artifactCard(a) {
+  const fmt = a.format;
+  const meta = el("div", { class: "meta" }, el("div", {}, a.title || "Your file"),
+    el("small", {}, `${fmt.toUpperCase()} · ${a.units || "?"} ${UNIT[fmt] || "parts"} · version ${a.version}`));
+  const top = el("div", { class: "top" }, el("div", { class: `ficon ${fmt}` }, fmt.toUpperCase()), meta);
+  if (a.verdict) top.append(el("span", { class: `badge ${a.verdict}` }, VERDICT[a.verdict] || a.verdict));
+  const card = el("div", { class: "artifact" }, top);
+  if (a.preview_urls && a.preview_urls.length) {
+    const strip = el("div", { class: "thumbs" }); card.append(strip);
+    a.preview_urls.forEach(async (u, i) => {
+      const img = el("img", { alt: `Slide ${i + 1} preview`, loading: "lazy" }); strip.append(img);
+      try { const r = await fetch(u, { headers: { Authorization: `Bearer ${S.token}` } }); if (r.ok) img.src = URL.createObjectURL(await r.blob()); else img.remove(); }
+      catch { img.remove(); }
+      img.onclick = () => { $("lightbox").querySelector("img").src = img.src; $("lightbox").classList.add("on"); };
+    });
+  }
+  const report = el("div", { class: "report" });
+  const reportBtn = el("button", { class: "btn ghost small", onclick: async () => {
+    if (!report.dataset.loaded) {
+      try {
+        const r = await api(a.quality_report_url); report.dataset.loaded = "1";
+        const s = r.summary || {};
+        report.append(el("p", {}, `${s.detected || 0} issues found · ${s.corrected || 0} fixed automatically · ${s.unresolved || 0} open · ${s.skipped || 0} checks not run`));
+        const open = (r.findings || []).filter((f) => f.status !== "corrected");
+        if (open.length) report.append(el("ul", {}, ...open.slice(0, 12).map((f) => el("li", {}, el("span", { class: `sev ${f.severity}` }, f.severity), f.message))));
+        const skipped = (r.checks || []).filter((c) => c.status === "skipped");
+        if (skipped.length) report.append(el("p", { style: "color:var(--muted)" }, "Not checked: " + skipped.map((c) => c.reason || c.check_id).join("; ")));
+      } catch (e) { report.append(el("p", {}, e.message)); }
+    }
+    report.classList.toggle("on"); reportBtn.textContent = report.classList.contains("on") ? "Hide quality report" : "Quality report";
+  } }, "Quality report");
+  const dl = el("button", { class: "btn small", onclick: () => download(a, dl) }, `Download ${fmt.toUpperCase()}`);
+  card.append(report, el("div", { class: "actions" }, dl, reportBtn));
+  return card;
+}
+async function download(a, btn) {
+  const label = btn.textContent; btn.disabled = true; btn.textContent = "Preparing…";
+  try {
+    const r = await fetch(a.download_url, { headers: { Authorization: `Bearer ${S.token}` } });
+    if (!r.ok) throw new Error(`Download failed (${r.status})`);
+    const m = (r.headers.get("content-disposition") || "").match(/filename\*?=(?:UTF-8'')?"?([^";]+)/i);
+    const url = URL.createObjectURL(await r.blob());
+    const link = el("a", { href: url, download: m ? decodeURIComponent(m[1]) : `deliverable.${a.format}` });
+    document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (e) { alert(e.message); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+function progressBubble() {
+  document.querySelector(".hero")?.remove();
+  const body = botShell();
+  const head = el("div", { class: "head" }, el("span", {}, "Working on it"), el("small", {}, "0s"));
+  const list = el("div", {});
+  const box = el("div", { class: "progress" }, head, list);
+  body.append(box); scrollDown();
+  const started = Date.now();
+  const timer = setInterval(() => { head.lastChild.textContent = `${Math.round((Date.now() - started) / 1000)}s`; }, 1000);
+  return {
+    update(steps) {
+      const seen = steps.map((s) => s.stage); const last = seen[seen.length - 1];
+      const known = STEPS.filter(([k]) => seen.includes(k) || k === "understand");
+      const extra = steps.filter((s) => !STEPS.some(([k]) => k === s.stage));
+      list.innerHTML = "";
+      for (const [k, label] of known) {
+        const txt = (steps.find((s) => s.stage === k) || {}).text || label;
+        const state = k === last ? "now" : "done";
+        list.append(el("div", { class: `step ${state}` }, el("span", { class: "dot", html: state === "done" ? ICON_CHECK : "" }), txt));
+      }
+      for (const s of extra) list.append(el("div", { class: `step ${s.stage === last ? "now" : "done"}` }, el("span", { class: "dot", html: s.stage === last ? "" : ICON_CHECK }), s.text));
+    },
+    remove() { clearInterval(timer); body.parentElement.remove(); },
+  };
+}
+
+// ---------------------------------------------------------------- composer
+const ROLE_GUESS = (name) => /\.(pptx|potx|dotx|xltx)$/i.test(name) ? "template" : /\.(csv|tsv|xlsx)$/i.test(name) ? "dataset"
+  : /\.docx$/i.test(name) ? "source" : "source";
+function stage(files) {
+  for (const f of files) S.staged.push({ file: f, role: ROLE_GUESS(f.name) });
+  renderStaged();
+}
+function renderStaged() {
+  const box = $("staged"); box.innerHTML = "";
+  S.staged.forEach((s, i) => {
+    const sel = el("select", { "aria-label": `Role of ${s.file.name}`, onchange: (e) => { s.role = e.target.value; } });
+    for (const r of ["template", "source", "dataset"]) sel.append(el("option", { value: r, ...(r === s.role ? { selected: "" } : {}) }, r));
+    box.append(el("span", { class: "chip" }, "📎 ", el("b", {}, s.file.name), " as ", sel,
+      el("button", { class: "icon-btn", title: "Remove", "aria-label": `Remove ${s.file.name}`, html: ICON_X, onclick: () => { S.staged.splice(i, 1); renderStaged(); } })));
+  });
+}
+$("attachBtn").onclick = () => $("file").click();
+$("file").onchange = (e) => { stage(e.target.files); e.target.value = ""; };
+const comp = $("composer");
+["dragenter", "dragover"].forEach((t) => comp.addEventListener(t, (e) => { e.preventDefault(); comp.classList.add("drag"); }));
+["dragleave", "drop"].forEach((t) => comp.addEventListener(t, (e) => { e.preventDefault(); comp.classList.remove("drag"); }));
+comp.addEventListener("drop", (e) => stage(e.dataTransfer.files));
+function autosize() { const t = $("prompt"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 220) + "px"; }
+$("prompt").addEventListener("input", autosize);
+$("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+$("send").onclick = send;
+
+async function send() {
+  if (S.busy) return;
+  let text = $("prompt").value.trim();
+  if (!text && !S.staged.length) { $("prompt").focus(); return; }
+  if (!text) { // a file on its own still gets an answer
+    const roles = new Set(S.staged.map((s) => s.role));
+    text = roles.has("template") ? "Use the attached template and regenerate the current deliverable." : "Use the attached file(s) as sources for the current request.";
+  }
+  S.busy = true; $("send").disabled = true;
+  const staged = S.staged.splice(0); renderStaged();
+  $("prompt").value = ""; autosize();
+  let progress = null;
+  try {
+    const sid = await ensureSession();
+    const uploaded = [];
+    for (const s of staged) {
+      const fd = new FormData(); fd.append("file", s.file); fd.append("role", s.role);
+      uploaded.push(await api(`/api/sessions/${sid}/files`, { method: "POST", body: fd }));
+    }
+    addUser(text, uploaded);
+    progress = progressBubble();
+    const job = await api(`/api/sessions/${sid}/jobs`, json("POST", { content: text, file_ids: uploaded.map((u) => u.id) }));
+    loadSessions();
+    let state;
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1200));
+      state = await api(`/api/sessions/${sid}/jobs/${job.job_id}`);
+      progress.update(state.steps || []);
+      if (state.status !== "running") break;
+    }
+    progress.remove(); progress = null;
+    if (state.status === "done") addBot(state.result.reply.content, state.result.artifact);
+    else addBot(`Something went wrong on the server (${state.error || "unknown error"}). Nothing was delivered — say “try again”.`, null, true);
+    loadSessions();
+  } catch (e) {
+    progress?.remove();
+    addBot(e.message, null, true);
+  } finally { S.busy = false; $("send").disabled = false; $("prompt").focus(); }
+}
+
+// ---------------------------------------------------------------- misc
+$("lightbox").onclick = () => $("lightbox").classList.remove("on");
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("lightbox").classList.remove("on"); });
+function closeSide() { $("side").classList.remove("open"); }
+$("menuBtn").onclick = () => $("side").classList.toggle("open");
+$("themeBtn").onclick = () => {
+  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.dataset.theme = dark ? "light" : "dark"; store.set("df_theme", document.documentElement.dataset.theme);
+};
+(async function boot() {
+  const theme = store.get("df_theme"); if (theme) document.documentElement.dataset.theme = theme;
+  S.token = store.get("df_token"); S.user = store.get("df_user");
+  if (S.token) { try { await enter(); return; } catch { signOut(); } }
+  $("user").focus();
+})();
+</script>
+</body>
+</html>

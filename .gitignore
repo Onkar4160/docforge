@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Secrets - copy .env.example to .env locally
+.env
+
+# Runtime data (generated at runtime)
+/var/
+/storage/
+/eval/out/
+
+# Tooling / test output
+.pytest_cache/
+.ruff_cache/
+.pytest_tmp/
+.pytest_tmp_os/
+*_out.txt
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
