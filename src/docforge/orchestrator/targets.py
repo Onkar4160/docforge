@@ -40,7 +40,9 @@ _SLIDE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SECTION_PATTERN = re.compile(
-    r"\b(?:section|heading|part)\s*#?\s*(\d+)\b|\b(" + "|".join(_ORDINALS.keys()) + r")\s+(?:section|heading|part)\b",
+    r"\b(?:section|heading|part)\s*#?\s*(\d+)\b|\b("
+    + "|".join(_ORDINALS.keys())
+    + r")\s+(?:section|heading|part)\b",
     re.IGNORECASE,
 )
 _SHEET_PATTERN = re.compile(

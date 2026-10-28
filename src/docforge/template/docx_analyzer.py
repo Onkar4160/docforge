@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 from docx import Document
@@ -329,8 +329,12 @@ def analyze_docx(path: Path, *, template_id: str | None = None) -> TemplateManif
                 first_page_footer=first_ftr,
                 even_page_header=even_hdr,
                 even_page_footer=even_ftr,
-                header_distance_emu=int(section.header_distance) if section.header_distance is not None else None,
-                footer_distance_emu=int(section.footer_distance) if section.footer_distance is not None else None,
+                header_distance_emu=(
+                    int(section.header_distance) if section.header_distance is not None else None
+                ),
+                footer_distance_emu=(
+                    int(section.footer_distance) if section.footer_distance is not None else None
+                ),
             )
         )
 

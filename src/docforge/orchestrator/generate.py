@@ -29,7 +29,6 @@ from docforge.agents.editor import (
     SlideInsertionAgent,
     SlideInsertionInput,
     exact_section_replacement,
-    is_section_level_edit,
     select_section_block,
 )
 from docforge.agents.interpreter import InterpreterAgent, render_input
@@ -158,7 +157,11 @@ def friendly_error(exc: Exception, doing: str) -> str:
         tip = "Say “try again”; it usually works on a second attempt."
     elif isinstance(exc, DocForgeError) and "billing" in exc.message.lower():
         reason = "the AI provider requires billing to be enabled for this project"
-        tip = "The Gemini API free tier is disabled for this project. Set up billing at https://aistudio.google.com/billing, use an API key from a personal project with free tier enabled, or set LLM_PROVIDER=openai_compat in .env."
+        tip = (
+            "The Gemini API free tier is disabled for this project. Set up billing at "
+            "https://aistudio.google.com/billing, use an API key from a personal project with free "
+            "tier enabled, or set LLM_PROVIDER=openai_compat in .env."
+        )
     elif isinstance(exc, DocForgeError) and "authentication" in exc.message:
         reason = "the AI provider rejected the API key"
         tip = "Check GEMINI_API_KEY in .env and restart the server."
@@ -1373,7 +1376,9 @@ class GenerationService:
         ]
         if info.image_assets:
             logos = [a for a in info.image_assets if a.is_logo]
-            lines.append(f"Branding assets: {len(logos)} logo(s) found in {', '.join(a.location for a in logos)}")
+            lines.append(
+                f"Branding assets: {len(logos)} logo(s) found in {', '.join(a.location for a in logos)}"
+            )
         hdr_texts = [s.header_text for s in info.sections if s.header_text]
         if hdr_texts:
             lines.append(f"Header branding text: {'; '.join(hdr_texts)}")
