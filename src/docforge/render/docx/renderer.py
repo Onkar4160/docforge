@@ -20,6 +20,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
+from docx.text.paragraph import Paragraph
 
 from docforge.design.system import readable_on
 from docforge.models.design import DesignTokens
@@ -42,8 +43,6 @@ from docforge.models.ir import (
 )
 from docforge.render.charts import chart_png
 from docforge.render.citations import Citations
-
-from docx.text.paragraph import Paragraph
 
 DEFAULT_SIZES = {"title": 28.0, "h1": 16.0, "h2": 13.0, "h3": 12.0}
 _ALIGNMENT = {
@@ -324,23 +323,22 @@ class DocxRenderer:
 
             footer = section.footer
             has_footer = _has_content(footer)
-            if "PAGE" not in footer._element.xml:
-                if self.styled or not has_footer:
-                    if not footer.paragraphs:
-                        footer.add_paragraph()
-                    fp = footer.paragraphs[0]
-                    fp.text = ""
-                    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    fp.add_run("Page ")
-                    _add_field(fp, "PAGE", "1")
-                    fp.add_run(" of ")
-                    _add_field(fp, "NUMPAGES", "1")
-                    for r in fp.runs:
-                        r.font.size = Pt(9)
-                        r.font.color.rgb = _rgb(text_muted)
-                        if body_font:
-                            r.font.name = body_font
-                            r._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), body_font)
+            if "PAGE" not in footer._element.xml and (self.styled or not has_footer):
+                if not footer.paragraphs:
+                    footer.add_paragraph()
+                fp = footer.paragraphs[0]
+                fp.text = ""
+                fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                fp.add_run("Page ")
+                _add_field(fp, "PAGE", "1")
+                fp.add_run(" of ")
+                _add_field(fp, "NUMPAGES", "1")
+                for r in fp.runs:
+                    r.font.size = Pt(9)
+                    r.font.color.rgb = _rgb(text_muted)
+                    if body_font:
+                        r.font.name = body_font
+                        r._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), body_font)
 
     # ---------------------------------------------------------------- document parts
 
@@ -667,7 +665,12 @@ def render_document(
 
     if cover_logo is None and template_manifest is not None and template_manifest.docx is not None:
         for asset in template_manifest.docx.image_assets:
-            if asset.is_logo and asset.location == "body" and asset.file_path and Path(asset.file_path).exists():
+            if (
+                asset.is_logo
+                and asset.location == "body"
+                and asset.file_path
+                and Path(asset.file_path).exists()
+            ):
                 try:
                     cover_logo = Path(asset.file_path).read_bytes()
                     cover_w = asset.width_emu

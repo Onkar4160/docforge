@@ -62,7 +62,10 @@ def map_http_error(resp: httpx.Response, provider: str, *, schema_sent: bool = F
             pass
         if "billing" in msg.lower() or "free tier" in msg.lower():
             raise LLMError(f"{provider}: billing required ({msg})", details={**details, "message": msg})
-        raise LLMError(f"{provider}: authentication failed or access forbidden; check the API key ({msg})", details={**details, "message": msg})
+        raise LLMError(
+            f"{provider}: authentication failed or access forbidden; check the API key ({msg})",
+            details={**details, "message": msg},
+        )
     if resp.status_code == 400 and schema_sent:
         raise LLMSchemaRejected(f"{provider}: native schema rejected: {snippet}", details=details)
     raise LLMError(f"{provider}: request failed ({resp.status_code}): {snippet}", details=details)

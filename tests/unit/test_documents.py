@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from docx.shared import Inches
+from PIL import Image
 
 from docforge.agents.doc_writer import DocumentInput, assemble, target_words, write_document
 from docforge.design.system import generated_tokens
@@ -32,9 +34,6 @@ from docforge.models.intent import (
     TargetRef,
 )
 from docforge.models.ir import ParagraphBlock, SectionDraft, SectionInsertionPlan
-from docx.shared import Inches, Pt
-from PIL import Image
-
 from docforge.models.quality import Dimension, Severity, Verdict
 from docforge.orchestrator.generate import GenerationService
 from docforge.render.citations import Citations
@@ -425,7 +424,10 @@ async def test_generation_service_edits_docx(container, fake_llm):
                     level=ScopeLevel.unit,
                     targets=[TargetRef(kind=TargetKind.section, locator="first section")],
                 ),
-                instruction='In the first section, replace "Global monitoring initiatives" with "International standardization initiatives"',
+                instruction=(
+                    'In the first section, replace "Global monitoring initiatives" with '
+                    '"International standardization initiatives"'
+                ),
             ),
         ),
     )
@@ -434,7 +436,10 @@ async def test_generation_service_edits_docx(container, fake_llm):
             id="m7",
             session_id="ses_edit",
             role=Role.user,
-            content='In the first section, replace "Global monitoring initiatives" with "International standardization initiatives"',
+            content=(
+                'In the first section, replace "Global monitoring initiatives" with '
+                '"International standardization initiatives"'
+            ),
         )
     )
     reply7 = await GenerationService(container).handle_message(
@@ -461,7 +466,12 @@ async def test_generation_service_edits_docx(container, fake_llm):
     )
     fake_llm.add("style_planner", StylePlan(changes=[StyleChange(property="heading_font", value="Georgia")]))
     msg8 = container.repos.messages.put(
-        Message(id="m8", session_id="ses_edit", role=Role.user, content="Change document headings font to Georgia")
+        Message(
+            id="m8",
+            session_id="ses_edit",
+            role=Role.user,
+            content="Change document headings font to Georgia",
+        )
     )
     reply8 = await GenerationService(container).handle_message(
         container.repos.sessions.require(session.id), msg8
