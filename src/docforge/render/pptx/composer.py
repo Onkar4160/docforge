@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from pptx.enum.shapes import MSO_SHAPE
 
 from docforge.design.system import contrast_ratio, dark_color, readable_on
-from docforge.layout.backdrop import color_under
+from docforge.layout.backdrop import color_under, is_dark
 from docforge.layout.text import Para
 from docforge.models.design import DesignTokens
 from docforge.models.evidence import ResearchDossier
@@ -205,7 +205,16 @@ class DeckComposer:
             if self.tpl is not None:
                 slide, self.f, self.slots = self.tpl.add_slide(prs, archetype, slide_plan)
                 canvas = Canvas(slide, log, scale=self.f.scale)
-                if dark:
+                bg_color = color_under(slide, (0, 0, int(prs.slide_width), int(prs.slide_height)))
+                if bg_color and is_dark(bg_color) and not dark:
+                    old_text = self.pal.text
+                    self.pal = self.pal.model_copy(update={"text": readable_on(bg_color)})
+                    try:
+                        getattr(self, f"_{archetype.value}")(canvas, slide_plan, deck)
+                        self._footer(canvas, slide_plan, len(prs.slides._sldIdLst))
+                    finally:
+                        self.pal = self.pal.model_copy(update={"text": old_text})
+                elif dark:
                     self._template_structural(canvas, slide_plan, deck, archetype)
                 else:
                     getattr(self, f"_{archetype.value}")(canvas, slide_plan, deck)
@@ -414,10 +423,16 @@ class DeckComposer:
                 self.f = replace(self.f, body=Rect(body.x, bottom, body.w, body.y + body.h - bottom))
             return
         rect = rect or self.f.headline
+        text_color = color or self.pal.text
+        if not color and self.tpl is not None:
+            box = (int(rect.x * 914400), int(rect.y * 914400), int(rect.w * 914400), int(rect.h * 914400))
+            under = color_under(c.slide, box)
+            if under and contrast_ratio(self.pal.text, under) < 3.0:
+                text_color = readable_on(under)
         c.text(
             rect,
             [BulletPara(self._p(s.headline, 30, bold=True, heading=True))],
-            TextStyle(color or self.pal.text),
+            TextStyle(text_color),
             name="content:headline",
             min_pt=MIN_HEADLINE,
         )

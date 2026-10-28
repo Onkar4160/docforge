@@ -156,6 +156,9 @@ def friendly_error(exc: Exception, doing: str) -> str:
     elif isinstance(exc, LLMOutputInvalid):
         reason = "the AI model returned an unusable answer"
         tip = "Say “try again”; it usually works on a second attempt."
+    elif isinstance(exc, DocForgeError) and "billing" in exc.message.lower():
+        reason = "the AI provider requires billing to be enabled for this project"
+        tip = "The Gemini API free tier is disabled for this project. Set up billing at https://aistudio.google.com/billing, use an API key from a personal project with free tier enabled, or set LLM_PROVIDER=openai_compat in .env."
     elif isinstance(exc, DocForgeError) and "authentication" in exc.message:
         reason = "the AI provider rejected the API key"
         tip = "Check GEMINI_API_KEY in .env and restart the server."
@@ -779,59 +782,57 @@ class GenerationService:
                     task=current,
                 )
             edited_sec = exact_section_replacement(sec, instruction)
-            if edited_sec is None and is_section_level_edit(instruction):
-                editor = SectionEditorAgent(self.c.llm)
-                edited_sec = await editor.run(
-                    SectionEditorInput(
-                        section=sec,
-                        instruction=instruction,
-                        outline=outline,
-                        evidence_digest=evidence_digest(dossier) if dossier else None,
-                    )
-                )
-            if edited_sec is None:
-                selection = select_section_block(sec, instruction)
-                if selection is None:
-                    return self._say(
-                        session,
-                        "Which paragraph, bullet list, table, or figure should I change in "
-                        f"the section “{sec.heading}”? Please name it or quote the text to edit.",
-                        interp,
-                        task=current,
-                    )
-                editor = SectionEditorAgent(self.c.llm)
-                chunk = sec.model_copy(
-                    update={"blocks": [selection.block], "subsections": []}
-                )
-                edited_chunk = await editor.run(
-                    SectionEditorInput(
-                        section=chunk,
-                        instruction=instruction,
-                        outline=[(sec.id, sec.heading)],
-                        evidence_digest=evidence_digest(dossier) if dossier else None,
-                    )
-                )
-                if len(edited_chunk.blocks) != 1:
-                    return self._say(
-                        session,
-                        "The requested document edit did not produce one safely scoped block change.",
-                        interp,
-                        task=current,
-                    )
-                new_ir, _patch = apply_section_block_edit(
-                    base_ir,
-                    selection.section_id,
-                    selection.block_index,
-                    edited_chunk.blocks[0],
-                    instruction=instruction,
-                    base_version=base_version.version,
-                )
-                target_desc = f"one block in section “{sec.heading}”"
-            else:
+            if edited_sec is not None:
                 new_ir, _patch = apply_section_edit(
                     base_ir, edited_sec, instruction=instruction, base_version=base_version.version
                 )
                 target_desc = f"section “{edited_sec.heading}”"
+            else:
+                selection = (
+                    select_section_block(sec, instruction)
+                    if (interp.change and interp.change.scope.level == ScopeLevel.element)
+                    else None
+                )
+                if selection is not None:
+                    editor = SectionEditorAgent(self.c.llm)
+                    chunk = sec.model_copy(
+                        update={"blocks": [selection.block], "subsections": []}
+                    )
+                    edited_chunk = await editor.run(
+                        SectionEditorInput(
+                            section=chunk,
+                            instruction=instruction,
+                            outline=[(sec.id, sec.heading)],
+                            evidence_digest=evidence_digest(dossier) if dossier else None,
+                        )
+                    )
+                    if len(edited_chunk.blocks) == 1:
+                        new_ir, _patch = apply_section_block_edit(
+                            base_ir,
+                            selection.section_id,
+                            selection.block_index,
+                            edited_chunk.blocks[0],
+                            instruction=instruction,
+                            base_version=base_version.version,
+                        )
+                        target_desc = f"one block in section “{sec.heading}”"
+                    else:
+                        selection = None
+
+                if selection is None:
+                    editor = SectionEditorAgent(self.c.llm)
+                    edited_sec = await editor.run(
+                        SectionEditorInput(
+                            section=sec,
+                            instruction=instruction,
+                            outline=outline,
+                            evidence_digest=evidence_digest(dossier) if dossier else None,
+                        )
+                    )
+                    new_ir, _patch = apply_section_edit(
+                        base_ir, edited_sec, instruction=instruction, base_version=base_version.version
+                    )
+                    target_desc = f"section “{edited_sec.heading}”"
 
         elif isinstance(base_ir, WorkbookPlan):
             sheet = next((s for s in base_ir.sheets if s.id == target.unit_id), None)
@@ -1351,27 +1352,35 @@ class GenerationService:
         info = manifest.docx
         if info is None:
             return ""
-        return "\n".join(
-            [
-                "DOCX template guidance (observed only):",
-                f"Style roles: {info.role_style_map}",
-                "Styles: "
-                + "; ".join(
-                    f"{style.name} (id={style.style_id}, base={style.based_on}, "
-                    f"font={style.font.model_dump(mode='json') if style.font else 'unknown'})"
-                    for style in info.styles
-                    if style.in_use or style.name in info.role_style_map.values()
-                ),
-                "Sections: "
-                + "; ".join(
-                    f"{section.orientation}, {section.page_width}x{section.page_height} EMU, "
-                    f"margins={section.margins}, header={bool(section.header_text)}, "
-                    f"footer={bool(section.footer_text)}"
-                    for section in info.sections
-                ),
-                f"Existing TOC: {info.has_toc}",
-            ]
-        )
+        lines = [
+            "DOCX template guidance (observed only):",
+            f"Style roles: {info.role_style_map}",
+            "Styles: "
+            + "; ".join(
+                f"{style.name} (id={style.style_id}, base={style.based_on}, "
+                f"font={style.font.model_dump(mode='json') if style.font else 'unknown'})"
+                for style in info.styles
+                if style.in_use or style.name in info.role_style_map.values()
+            ),
+            "Sections: "
+            + "; ".join(
+                f"{section.orientation}, {section.page_width}x{section.page_height} EMU, "
+                f"margins={section.margins}, header={bool(section.header_text)}, "
+                f"footer={bool(section.footer_text)}"
+                for section in info.sections
+            ),
+            f"Existing TOC: {info.has_toc}",
+        ]
+        if info.image_assets:
+            logos = [a for a in info.image_assets if a.is_logo]
+            lines.append(f"Branding assets: {len(logos)} logo(s) found in {', '.join(a.location for a in logos)}")
+        hdr_texts = [s.header_text for s in info.sections if s.header_text]
+        if hdr_texts:
+            lines.append(f"Header branding text: {'; '.join(hdr_texts)}")
+        ftr_texts = [s.footer_text for s in info.sections if s.footer_text]
+        if ftr_texts:
+            lines.append(f"Footer branding text: {'; '.join(ftr_texts)}")
+        return "\n".join(lines)
 
     async def _analyze_template(self, manifest: TemplateManifest) -> TemplateManifest:
         """Cache LLM design guidance separately from deterministic PPTX extraction."""
@@ -1593,6 +1602,7 @@ class GenerationService:
                     dossier=usable,
                     libreoffice=settings.find_libreoffice(),
                     template=template,
+                    template_manifest=manifest,
                     audience=spec.audience,
                     artifact_id=artifact.id,
                     version=version_no,

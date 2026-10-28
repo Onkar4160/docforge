@@ -50,8 +50,19 @@ def map_http_error(resp: httpx.Response, provider: str, *, schema_sent: bool = F
         raise LLMModelUnavailable(f"{provider}: model not available", details=details)
     if resp.status_code >= 500 or resp.status_code == 408:
         raise LLMTransient(f"{provider}: server error {resp.status_code}", details=details)
-    if resp.status_code in (401, 403):
+    if resp.status_code == 401:
         raise LLMError(f"{provider}: authentication failed; check the API key", details=details)
+    if resp.status_code == 403:
+        msg = resp.text
+        try:
+            err_data = resp.json()
+            if isinstance(err_data, dict) and "error" in err_data:
+                msg = err_data["error"].get("message", msg)
+        except Exception:
+            pass
+        if "billing" in msg.lower() or "free tier" in msg.lower():
+            raise LLMError(f"{provider}: billing required ({msg})", details={**details, "message": msg})
+        raise LLMError(f"{provider}: authentication failed or access forbidden; check the API key ({msg})", details={**details, "message": msg})
     if resp.status_code == 400 and schema_sent:
         raise LLMSchemaRejected(f"{provider}: native schema rejected: {snippet}", details=details)
     raise LLMError(f"{provider}: request failed ({resp.status_code}): {snippet}", details=details)

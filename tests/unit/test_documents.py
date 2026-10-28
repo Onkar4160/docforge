@@ -9,7 +9,7 @@ from docx import Document
 from docforge.agents.doc_writer import DocumentInput, assemble, target_words, write_document
 from docforge.design.system import generated_tokens
 from docforge.llm import FakeLLMClient
-from docforge.models.conversation import Message, Role, Session
+from docforge.models.conversation import FileRole, Message, Role, Session, UploadedFile
 from docforge.models.evidence import Claim, EvidenceItem, ResearchDossier, Source
 from docforge.models.intent import (
     ChangeOperation,
@@ -32,11 +32,16 @@ from docforge.models.intent import (
     TargetRef,
 )
 from docforge.models.ir import ParagraphBlock, SectionDraft, SectionInsertionPlan
-from docforge.models.quality import Verdict
+from docx.shared import Inches, Pt
+from PIL import Image
+
+from docforge.models.quality import Dimension, Severity, Verdict
 from docforge.orchestrator.generate import GenerationService
 from docforge.render.citations import Citations
 from docforge.render.docx import render_document
-from docforge.validate.document import build_document
+from docforge.template.docx_analyzer import analyze_docx
+from docforge.validate.common import CheckRun
+from docforge.validate.document import build_document, check_docx_file
 from tests.fixtures.documents import outline, written
 
 pytestmark = pytest.mark.anyio
@@ -122,6 +127,7 @@ def test_render_document_structure(tmp_path: Path):
     assert result.figures == 1 and result.tables == 3 and result.references == 2  # data, timeline, comparison
     text = "\n".join(p.text for p in doc.paragraphs)
     assert "[1]" in text and "Figure 1: Particles per litre by study (particles/L)" in text
+    assert "Right-click and choose Update Field" not in text
     assert 'TOC \\o "1-3"' in doc.element.body.xml
     assert "PAGE" in doc.sections[0].footer._element.xml
     assert doc.inline_shapes[0]._inline.docPr.get("descr") == "Particles per litre by study"
@@ -366,3 +372,342 @@ async def test_generation_service_edits_docx(container, fake_llm):
     assert reply5.version.ir.sections[0].heading == "Empirical Findings & Data"
     doc5 = Document(io.BytesIO(container.blobs.read_bytes(reply5.version.blob_path)))
     assert any("Empirical Findings & Data" in p.text for p in doc5.paragraphs)
+
+    # 6. Edit section content by adding paragraph (version 6)
+    sec6 = reply5.version.ir.sections[0]
+    new_block = ParagraphBlock(text="Global monitoring initiatives have expanded empirical testing.")
+    sec6_edited = sec6.model_copy(update={"blocks": [*sec6.blocks, new_block]})
+    fake_llm._queues["interpreter"].clear()
+    fake_llm._queues["section_editor"].clear()
+    fake_llm.add(
+        "interpreter",
+        Interpretation(
+            kind=RequestKind.modify_artifact,
+            confidence=0.95,
+            objective="Microplastics report",
+            change=ChangeRequest(
+                operation=ChangeOperation.rewrite,
+                scope=ChangeScope(
+                    level=ScopeLevel.unit,
+                    targets=[TargetRef(kind=TargetKind.section, locator="first section")],
+                ),
+                instruction="In the first section, add a paragraph about global monitoring",
+            ),
+        ),
+    )
+    fake_llm.add("section_editor", sec6_edited)
+    msg6 = container.repos.messages.put(
+        Message(
+            id="m6",
+            session_id="ses_edit",
+            role=Role.user,
+            content="In the first section, add a paragraph about global monitoring",
+        )
+    )
+    reply6 = await GenerationService(container).handle_message(
+        container.repos.sessions.require(session.id), msg6
+    )
+    assert reply6.version.version == 6
+    doc6 = Document(io.BytesIO(container.blobs.read_bytes(reply6.version.blob_path)))
+    assert any("Global monitoring initiatives" in p.text for p in doc6.paragraphs)
+
+    # 7. Exact string replacement in section (version 7) without LLM editor call
+    fake_llm._queues["interpreter"].clear()
+    fake_llm.add(
+        "interpreter",
+        Interpretation(
+            kind=RequestKind.modify_artifact,
+            confidence=0.95,
+            objective="Microplastics report",
+            change=ChangeRequest(
+                operation=ChangeOperation.rewrite,
+                scope=ChangeScope(
+                    level=ScopeLevel.unit,
+                    targets=[TargetRef(kind=TargetKind.section, locator="first section")],
+                ),
+                instruction='In the first section, replace "Global monitoring initiatives" with "International standardization initiatives"',
+            ),
+        ),
+    )
+    msg7 = container.repos.messages.put(
+        Message(
+            id="m7",
+            session_id="ses_edit",
+            role=Role.user,
+            content='In the first section, replace "Global monitoring initiatives" with "International standardization initiatives"',
+        )
+    )
+    reply7 = await GenerationService(container).handle_message(
+        container.repos.sessions.require(session.id), msg7
+    )
+    assert reply7.version.version == 7
+    doc7 = Document(io.BytesIO(container.blobs.read_bytes(reply7.version.blob_path)))
+    assert any("International standardization initiatives" in p.text for p in doc7.paragraphs)
+
+    # 8. Document restyle (version 8)
+    fake_llm._queues["interpreter"].clear()
+    fake_llm.add(
+        "interpreter",
+        Interpretation(
+            kind=RequestKind.modify_artifact,
+            confidence=0.95,
+            objective="Microplastics report",
+            change=ChangeRequest(
+                operation=ChangeOperation.restyle,
+                scope=ChangeScope(level=ScopeLevel.style, targets=[]),
+                instruction="Change document headings font to Georgia",
+            ),
+        ),
+    )
+    fake_llm.add("style_planner", StylePlan(changes=[StyleChange(property="heading_font", value="Georgia")]))
+    msg8 = container.repos.messages.put(
+        Message(id="m8", session_id="ses_edit", role=Role.user, content="Change document headings font to Georgia")
+    )
+    reply8 = await GenerationService(container).handle_message(
+        container.repos.sessions.require(session.id), msg8
+    )
+    assert reply8.version.version == 8
+    assert reply8.version.ir.style.heading_font == "Georgia"
+
+
+def test_docx_validator_detects_placeholder_in_table(tmp_path: Path):
+    plan = _plan()
+    doc_path = tmp_path / "with_placeholder.docx"
+    result = render_document(plan, generated_tokens("x"), doc_path)
+
+    doc = Document(str(doc_path))
+    table = doc.add_table(rows=1, cols=1)
+    table.rows[0].cells[0].paragraphs[0].text = "TODO: add the missing result"
+    doc.save(str(doc_path))
+
+    run = CheckRun()
+    check_docx_file(run, doc_path, result, None, plan, None)
+    findings = [f for f in run.findings if f.check_id == "content.placeholder_text"]
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.critical
+    assert findings[0].dimension == Dimension.content
+    assert "TODO: add the missing result" in findings[0].message
+
+
+def _create_sample_logo_png() -> bytes:
+    img = Image.new("RGB", (120, 60), color=(20, 80, 180))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_docx_template_extraction_header_footer_and_logo(tmp_path: Path):
+    tpl = Document()
+    tpl.styles["Heading 1"].font.name = "Georgia"
+    section = tpl.sections[0]
+    section.left_margin = Inches(1.25)
+    section.right_margin = Inches(1.25)
+    section.header_distance = Inches(0.4)
+    section.footer_distance = Inches(0.4)
+
+    # Header with logo + company branding text
+    hp = section.header.paragraphs[0]
+    hp.text = "ACME Global Research | Internal Only"
+    run = hp.add_run()
+    run.add_picture(io.BytesIO(_create_sample_logo_png()), width=Inches(1.2))
+
+    # Footer with confidentiality and page number
+    fp = section.footer.paragraphs[0]
+    fp.text = "Confidential - Proprietary"
+    from docforge.render.docx.renderer import _add_field
+
+    fp.add_run(" - Page ")
+    _add_field(fp, "PAGE", "1")
+
+    tpl.add_paragraph("Sample body text that should be removed")
+    template_path = tmp_path / "branded_template.docx"
+    tpl.save(str(template_path))
+
+    manifest = analyze_docx(template_path)
+    assert manifest.format.value == "docx"
+    assert manifest.docx is not None
+    info = manifest.docx
+    assert len(info.sections) == 1
+    sec_info = info.sections[0]
+    assert "ACME Global Research" in sec_info.header_text
+    assert "Confidential" in sec_info.footer_text
+    assert sec_info.has_page_number is True
+    assert sec_info.margins["left"] == int(Inches(1.25))
+
+    # Verify logo extraction
+    assert len(info.image_assets) >= 1
+    logo_asset = next((a for a in info.image_assets if a.is_logo), None)
+    assert logo_asset is not None
+    assert logo_asset.location == "header"
+    assert logo_asset.width_emu is not None and logo_asset.width_emu > 0
+
+
+def test_docx_template_reuse_generates_document_with_branding(tmp_path: Path):
+    tpl = Document()
+    tpl.styles["Heading 1"].font.name = "Georgia"
+    section = tpl.sections[0]
+    section.header.paragraphs[0].text = "ACME Corp Header"
+    run = section.header.paragraphs[0].add_run()
+    run.add_picture(io.BytesIO(_create_sample_logo_png()), width=Inches(1.0))
+    section.footer.paragraphs[0].text = "ACME Corp Footer Confidential"
+
+    tpl.add_paragraph("OLD SAMPLE CONTENT TO REMOVE")
+    template_path = tmp_path / "branded_tpl2.docx"
+    tpl.save(str(template_path))
+
+    manifest = analyze_docx(template_path)
+    out_path = tmp_path / "branded_output.docx"
+    render_document(
+        _plan(["c1", "c2"]),
+        generated_tokens("test"),
+        out_path,
+        dossier=_dossier(),
+        template=template_path,
+        template_manifest=manifest,
+    )
+
+    doc = Document(str(out_path))
+    body_text = "\n".join(p.text for p in doc.paragraphs)
+    assert "OLD SAMPLE CONTENT" not in body_text
+    assert "What the evidence shows" in body_text
+
+    # Verify header and footer preservation
+    assert doc.sections[0].header.paragraphs[0].text.startswith("ACME Corp Header")
+    assert "<w:drawing" in doc.sections[0].header._element.xml
+    assert "ACME Corp Footer Confidential" in doc.sections[0].footer.paragraphs[0].text
+
+
+def test_docx_template_multi_section_and_different_first_page(tmp_path: Path):
+    tpl = Document()
+    sec1 = tpl.sections[0]
+    sec1.different_first_page_header_footer = True
+    sec1.first_page_header.paragraphs[0].text = "First Page Header Only"
+    sec1.header.paragraphs[0].text = "Default Section 1 Header"
+    sec1.footer.paragraphs[0].text = "Section 1 Footer"
+
+    # Add second section
+    sec2 = tpl.add_section()
+    sec2.header.paragraphs[0].text = "Section 2 Distinct Header"
+    sec2.footer.paragraphs[0].text = "Section 2 Distinct Footer"
+
+    template_path = tmp_path / "multi_sec.docx"
+    tpl.save(str(template_path))
+
+    manifest = analyze_docx(template_path)
+    assert len(manifest.docx.sections) == 2
+    assert manifest.docx.sections[0].different_first_page is True
+    assert manifest.docx.sections[0].first_page_header.text == "First Page Header Only"
+    assert manifest.docx.sections[1].default_header.text == "Section 2 Distinct Header"
+
+    out_path = tmp_path / "multi_sec_out.docx"
+    render_document(
+        _plan(),
+        generated_tokens("test"),
+        out_path,
+        template=template_path,
+        template_manifest=manifest,
+    )
+    doc = Document(str(out_path))
+    assert len(doc.sections) == 2
+    assert "Right-click and choose Update Field" not in "\n".join(p.text for p in doc.paragraphs)
+    assert doc.sections[1].header.paragraphs[0].text == "Section 2 Distinct Header"
+    assert doc.sections[1].footer.paragraphs[0].text == "Section 2 Distinct Footer"
+
+
+def test_docx_template_cover_logo_extracted_and_reused(tmp_path: Path):
+    tpl = Document()
+    p = tpl.add_paragraph()
+    run = p.add_run()
+    run.add_picture(io.BytesIO(_create_sample_logo_png()), width=Inches(2.5))
+    tpl.add_paragraph("Sample cover title")
+    tpl.add_paragraph("Sample body")
+
+    template_path = tmp_path / "cover_logo_tpl.docx"
+    tpl.save(str(template_path))
+
+    manifest = analyze_docx(template_path)
+    assert any(a.is_logo for a in manifest.docx.image_assets)
+
+    out_path = tmp_path / "cover_logo_out.docx"
+    render_document(
+        _plan(),
+        generated_tokens("test"),
+        out_path,
+        template=template_path,
+        template_manifest=manifest,
+    )
+    doc = Document(str(out_path))
+    # Check that a drawing was added to the title page area
+    assert any("<w:drawing" in p._element.xml for p in doc.paragraphs[:5])
+
+
+def test_docx_template_no_logo_renders_cleanly(tmp_path: Path):
+    tpl = Document()
+    tpl.styles["Normal"].font.name = "Arial"
+    tpl.sections[0].header.paragraphs[0].text = "Header Without Logo"
+    tpl.add_paragraph("Body paragraph")
+    template_path = tmp_path / "no_logo_tpl.docx"
+    tpl.save(str(template_path))
+
+    manifest = analyze_docx(template_path)
+    assert not any(a.is_logo for a in manifest.docx.image_assets)
+
+    out_path = tmp_path / "no_logo_out.docx"
+    render_document(
+        _plan(),
+        generated_tokens("test"),
+        out_path,
+        template=template_path,
+        template_manifest=manifest,
+    )
+    doc = Document(str(out_path))
+    assert doc.sections[0].header.paragraphs[0].text == "Header Without Logo"
+    assert "PAGE" in doc.sections[0].footer._element.xml
+
+
+async def test_generation_service_generates_docx_with_template(container, fake_llm, tmp_path: Path):
+    tpl = Document()
+    tpl.styles["Normal"].font.name = "Arial"
+    tpl.sections[0].header.paragraphs[0].text = "Acme Annual Report"
+    run = tpl.sections[0].header.paragraphs[0].add_run()
+    run.add_picture(io.BytesIO(_create_sample_logo_png()), width=Inches(1.0))
+    template_path = tmp_path / "acme_template.docx"
+    tpl.save(str(template_path))
+
+    blob = container.blobs.put_file(template_path)
+    session = container.repos.sessions.put(Session(id="ses_tpl_doc", title="Acme Session", owner="demo"))
+    container.repos.files.put(
+        UploadedFile(
+            id="f_tpl",
+            session_id=session.id,
+            filename="acme_template.docx",
+            role=FileRole.template,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            size=len(blob.path),
+            sha256="fake_sha",
+            blob_path=blob.path,
+        )
+    )
+
+    fake_llm.add(
+        "interpreter",
+        Interpretation(
+            kind=RequestKind.new_task,
+            confidence=0.95,
+            objective="Generate an Acme report",
+            output_spec=OutputSpec(format=OutputFormat.docx),
+        ),
+    )
+    fake_llm.add("doc_outliner", outline())
+    for w in written():
+        fake_llm.add("section_writer", w)
+
+    msg = container.repos.messages.put(
+        Message(id="m_tpl", session_id=session.id, role=Role.user, content="Generate an Acme report")
+    )
+    reply = await GenerationService(container).handle_message(session, msg)
+    assert reply.version is not None
+    assert reply.version.version == 1
+    doc = Document(io.BytesIO(container.blobs.read_bytes(reply.version.blob_path)))
+    assert "Acme Annual Report" in doc.sections[0].header.paragraphs[0].text
+    assert "<w:drawing" in doc.sections[0].header._element.xml

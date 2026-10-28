@@ -307,13 +307,22 @@ def tokens_from_docx_template(manifest, topic_text: str) -> DesignTokens:
         mono="Courier New",
     )
     palette_update = {}
+    if info.theme_colors:
+        tc = info.theme_colors
+        if "dk1" in tc:
+            palette_update["text"] = tc["dk1"]
+        if "accent1" in tc:
+            palette_update["primary"] = tc["accent1"]
+        accents = [tc[f"accent{i}"] for i in range(1, 7) if f"accent{i}" in tc]
+        if accents:
+            palette_update["accents"] = accents
     if normal and normal.font and normal.font.color:
         color = normal.font.color
-        if color and len(color) == 6:
+        if color and len(color) == 6 and not color.startswith("theme:"):
             palette_update["text"] = color.upper()
     if heading and heading.font and heading.font.color:
         color = heading.font.color
-        if color and len(color) == 6:
+        if color and len(color) == 6 and not color.startswith("theme:"):
             palette_update["primary"] = color.upper()
     base = generated_tokens(topic_text)
     return base.model_copy(

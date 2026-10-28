@@ -7,6 +7,7 @@ Formatting is applied through named styles, so later restyles touch styles, not 
 
 from __future__ import annotations
 
+import io
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -41,6 +42,8 @@ from docforge.models.ir import (
 )
 from docforge.render.charts import chart_png
 from docforge.render.citations import Citations
+
+from docx.text.paragraph import Paragraph
 
 DEFAULT_SIZES = {"title": 28.0, "h1": 16.0, "h2": 13.0, "h3": 12.0}
 _ALIGNMENT = {
@@ -83,7 +86,8 @@ def _add_field(paragraph, instruction: str, placeholder: str = "") -> None:
     instr.text = f" {instruction} "
     paragraph.add_run()._r.append(instr)
     fld("separate")
-    paragraph.add_run(placeholder)
+    if placeholder:
+        paragraph.add_run(placeholder)
     fld("end")
 
 
@@ -106,13 +110,34 @@ def _repeat_header(row) -> None:
 def _clear_body(doc) -> None:
     body = doc.element.body
     for child in list(body):
-        if child.tag != qn("w:sectPr"):
+        if child.tag == qn("w:sectPr"):
+            continue
+        sect_prs = child.xpath(".//w:sectPr")
+        if sect_prs:
+            for sub in list(child):
+                if sub.tag != qn("w:pPr"):
+                    child.remove(sub)
+            p_pr = child.find(qn("w:pPr"))
+            if p_pr is not None:
+                for psub in list(p_pr):
+                    if psub.tag != qn("w:sectPr"):
+                        p_pr.remove(psub)
+        else:
             body.remove(child)
 
 
 class DocxRenderer:
     def __init__(
-        self, tokens: DesignTokens, citations: Citations, *, styled: bool, fig_dir: Path, assets=None
+        self,
+        tokens: DesignTokens,
+        citations: Citations,
+        *,
+        styled: bool,
+        fig_dir: Path,
+        assets=None,
+        cover_logo: bytes | None = None,
+        cover_logo_width_emu: int | None = None,
+        cover_logo_alignment=None,
     ) -> None:
         self.assets = assets
         self.base_tokens = tokens
@@ -124,6 +149,9 @@ class DocxRenderer:
         self.tmp = fig_dir
         self.current_style = None
         self.role_style_map: dict[str, str] = {}
+        self.cover_logo = cover_logo
+        self.cover_logo_width_emu = cover_logo_width_emu
+        self.cover_logo_alignment = cover_logo_alignment
 
     # ---------------------------------------------------------------- styles
 
@@ -264,45 +292,89 @@ class DocxRenderer:
             paragraph.paragraph_format.line_spacing = style.line_spacing
 
     def header_footer(self, doc, plan: DocumentPlan) -> None:
-        section = doc.sections[0]
-        section.different_first_page_header_footer = True
         body_font = plan.style.body_font or self.t.fonts.body
         text_muted = plan.style.palette_overrides.get("text_muted", self.t.palette.text_muted)
-        if self.styled or not section.header.paragraphs[0].text.strip():
-            hp = section.header.paragraphs[0]
-            hp.text = plan.title
-            hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            for r in hp.runs:
-                r.font.size = Pt(9)
-                r.font.color.rgb = _rgb(text_muted)
-                if body_font:
-                    r.font.name = body_font
-                    r._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), body_font)
-        footer = section.footer
-        if "PAGE" not in footer._element.xml:
-            fp = footer.paragraphs[0]
-            fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            fp.add_run("Page ")
-            _add_field(fp, "PAGE", "1")
-            fp.add_run(" of ")
-            _add_field(fp, "NUMPAGES", "1")
-            for r in fp.runs:
-                r.font.size = Pt(9)
-                r.font.color.rgb = _rgb(text_muted)
-                if body_font:
-                    r.font.name = body_font
-                    r._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), body_font)
+
+        def _has_content(part) -> bool:
+            if not part:
+                return False
+            if any(p.text.strip() for p in part.paragraphs):
+                return True
+            if len(part.tables) > 0:
+                return True
+            xml = part._element.xml
+            return "<w:drawing" in xml or "<w:pict" in xml
+
+        for section in doc.sections:
+            if self.styled:
+                section.different_first_page_header_footer = True
+
+            if self.styled or not _has_content(section.header):
+                if not section.header.paragraphs:
+                    section.header.add_paragraph()
+                hp = section.header.paragraphs[0]
+                hp.text = plan.title
+                hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                for r in hp.runs:
+                    r.font.size = Pt(9)
+                    r.font.color.rgb = _rgb(text_muted)
+                    if body_font:
+                        r.font.name = body_font
+                        r._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), body_font)
+
+            footer = section.footer
+            has_footer = _has_content(footer)
+            if "PAGE" not in footer._element.xml:
+                if self.styled or not has_footer:
+                    if not footer.paragraphs:
+                        footer.add_paragraph()
+                    fp = footer.paragraphs[0]
+                    fp.text = ""
+                    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    fp.add_run("Page ")
+                    _add_field(fp, "PAGE", "1")
+                    fp.add_run(" of ")
+                    _add_field(fp, "NUMPAGES", "1")
+                    for r in fp.runs:
+                        r.font.size = Pt(9)
+                        r.font.color.rgb = _rgb(text_muted)
+                        if body_font:
+                            r.font.name = body_font
+                            r._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), body_font)
 
     # ---------------------------------------------------------------- document parts
 
     def title_page(self, doc, plan: DocumentPlan, audience: str) -> None:
         style = plan.style
-        for _ in range(6):
-            doc.add_paragraph()
-        p_title = doc.add_paragraph(plan.title, style=self.role_style_map.get("title", "Title"))
+        sect_break_p = next(
+            (c for c in list(doc.element.body) if c.tag != qn("w:sectPr") and c.xpath(".//w:sectPr")),
+            None,
+        )
+
+        def _add_p(text: str = "", p_style=None) -> Paragraph:
+            if sect_break_p is not None:
+                p_elem = doc._body._element._new_p()
+                sect_break_p.addprevious(p_elem)
+                p = Paragraph(p_elem, doc)
+                if p_style is not None:
+                    p.style = p_style
+                if text:
+                    p.text = text
+                return p
+            return doc.add_paragraph(text, style=p_style)
+
+        if self.cover_logo:
+            p_logo = _add_p()
+            p_logo.alignment = self.cover_logo_alignment or WD_ALIGN_PARAGRAPH.CENTER
+            r_logo = p_logo.add_run()
+            width = Inches(self.cover_logo_width_emu / 914400) if self.cover_logo_width_emu else Inches(2.0)
+            r_logo.add_picture(io.BytesIO(self.cover_logo), width=width)
+        for _ in range(3 if self.cover_logo else 6):
+            _add_p()
+        p_title = _add_p(plan.title, p_style=self.role_style_map.get("title", "Title"))
         self._format_paragraph(p_title, style, heading=True, level=0)
         if plan.subtitle:
-            p_sub = doc.add_paragraph(plan.subtitle, style="Subtitle" if "Subtitle" in doc.styles else None)
+            p_sub = _add_p(plan.subtitle, p_style="Subtitle" if "Subtitle" in doc.styles else None)
             self._format_paragraph(p_sub, style)
         meta = [
             m
@@ -313,14 +385,15 @@ class DocxRenderer:
             )
             if m
         ]
-        p = doc.add_paragraph(" · ".join(meta))
+        p = _add_p(" · ".join(meta))
         text_muted = style.palette_overrides.get("text_muted", self.t.palette.text_muted)
         for r in p.runs:
             r.font.color.rgb = _rgb(text_muted)
             if style.body_font:
                 r.font.name = style.body_font
                 r._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), style.body_font)
-        p.add_run().add_break(WD_BREAK.PAGE)
+        if sect_break_p is None:
+            p.add_run().add_break(WD_BREAK.PAGE)
 
     def toc(self, doc) -> None:
         heading = doc.add_paragraph("Contents", style="TOC Heading" if "TOC Heading" in doc.styles else None)
@@ -330,7 +403,7 @@ class DocxRenderer:
         _add_field(
             doc.add_paragraph(),
             'TOC \\o "1-3" \\h \\z \\u',
-            "Right-click and choose Update Field to build the table of contents.",
+            "",
         )
         doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
         settings = doc.settings.element
@@ -555,6 +628,25 @@ class DocxRenderer:
         doc.add_paragraph()
 
 
+def _extract_cover_logo(doc) -> tuple[bytes | None, int | None, WD_ALIGN_PARAGRAPH | None]:
+    for p in doc.paragraphs[:10]:
+        xml = p._element.xml
+        if "<w:drawing" in xml or "<w:pict" in xml:
+            for blip in p._p.xpath(".//a:blip"):
+                rid = blip.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
+                if not rid:
+                    continue
+                target_part = getattr(doc.part, "related_parts", {}).get(rid)
+                if target_part is None and hasattr(doc.part, "rels") and rid in doc.part.rels:
+                    target_part = doc.part.rels[rid].target_part
+                if target_part and hasattr(target_part, "blob"):
+                    exts = p._p.xpath(".//wp:extent")
+                    cx = int(exts[0].attrib.get("cx")) if exts and exts[0].attrib.get("cx") else None
+                    alignment = p.alignment
+                    return target_part.blob, cx, alignment
+    return None, None, None
+
+
 def render_document(
     plan: DocumentPlan,
     tokens: DesignTokens,
@@ -568,8 +660,21 @@ def render_document(
     asset_resolver=None,
 ) -> DocRenderResult:
     doc = Document(str(template)) if template else Document()
+    cover_logo, cover_w, cover_align = None, None, None
     if template:
+        cover_logo, cover_w, cover_align = _extract_cover_logo(doc)
         _clear_body(doc)
+
+    if cover_logo is None and template_manifest is not None and template_manifest.docx is not None:
+        for asset in template_manifest.docx.image_assets:
+            if asset.is_logo and asset.location == "body" and asset.file_path and Path(asset.file_path).exists():
+                try:
+                    cover_logo = Path(asset.file_path).read_bytes()
+                    cover_w = asset.width_emu
+                    break
+                except OSError:
+                    pass
+
     fig_dir = out_path.parent / f".{out_path.stem}-figures"
     renderer = DocxRenderer(
         tokens,
@@ -577,6 +682,9 @@ def render_document(
         styled=template is None,
         fig_dir=fig_dir,
         assets=asset_resolver,
+        cover_logo=cover_logo,
+        cover_logo_width_emu=cover_w,
+        cover_logo_alignment=cover_align,
     )
     if template_manifest is not None and template_manifest.docx is not None:
         renderer.role_style_map = template_manifest.docx.role_style_map

@@ -91,6 +91,28 @@ def check_document_plan(run: CheckRun, plan: DocumentPlan, dossier: ResearchDoss
                                 unit_id=s.id,
                             )
 
+def _iter_all_docx_paragraphs(doc):
+    """Yield all paragraphs from body, table cells (including nested tables), and headers/footers."""
+    yield from doc.paragraphs
+
+    def _scan_table(tbl):
+        for row in tbl.rows:
+            for cell in row.cells:
+                yield from cell.paragraphs
+                for nested in cell.tables:
+                    yield from _scan_table(nested)
+
+    for tbl in doc.tables:
+        yield from _scan_table(tbl)
+
+    for s in doc.sections:
+        yield from s.header.paragraphs
+        for tbl in s.header.tables:
+            yield from _scan_table(tbl)
+        yield from s.footer.paragraphs
+        for tbl in s.footer.tables:
+            yield from _scan_table(tbl)
+
 
 def check_docx_file(
     run: CheckRun,
@@ -152,7 +174,7 @@ def check_docx_file(
                 run.finding("docx.tables", Dimension.structure, Severity.major, f"table {i} has ragged rows")
 
     with run.check("content.placeholder_text", 1):
-        for p in doc.paragraphs:
+        for p in _iter_all_docx_paragraphs(doc):
             if PLACEHOLDER_PATTERNS.search(p.text):
                 run.finding(
                     "content.placeholder_text",

@@ -40,7 +40,7 @@ _SLIDE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SECTION_PATTERN = re.compile(
-    r"\b(?:section|heading|part)\s*#?\s*(\d+)\b|\b(" + "|".join(_ORDINALS.keys()) + r")\s+(?:section|part)\b",
+    r"\b(?:section|heading|part)\s*#?\s*(\d+)\b|\b(" + "|".join(_ORDINALS.keys()) + r")\s+(?:section|heading|part)\b",
     re.IGNORECASE,
 )
 _SHEET_PATTERN = re.compile(
@@ -413,8 +413,19 @@ def _resolve_document_targets(
                 targets=[ResolvedTarget(unit_id=matched[0].id, label=matched[0].heading, kind="section")]
             )
 
-    # Check for "introduction" / "conclusion"
-    for keyword in ("introduction", "conclusion", "methodology", "background", "recommendations"):
+    # Check for "introduction" / "conclusion" / other common sections
+    for keyword in (
+        "introduction",
+        "conclusion",
+        "methodology",
+        "background",
+        "recommendations",
+        "overview",
+        "findings",
+        "discussion",
+        "results",
+        "analysis",
+    ):
         if re.search(rf"\b{keyword}\b", text, re.IGNORECASE):
             matched = [s for s in all_secs if keyword in s.heading.lower()]
             if len(matched) == 1:

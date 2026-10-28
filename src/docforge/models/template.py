@@ -182,6 +182,43 @@ class StyleInfo(DFModel):
     in_use: bool = False
 
 
+class HeaderFooterElementInfo(DFModel):
+    """One element found inside a header or footer."""
+
+    kind: str = Field(description="text | image | table | field")
+    text: str | None = None
+    field_code: str | None = Field(None, description="e.g. PAGE, NUMPAGES, DATE")
+    image_asset_key: str | None = Field(None, description="key into DocxTemplateInfo.image_assets")
+    width_emu: int | None = None
+    height_emu: int | None = None
+
+
+class HeaderFooterInfo(DFModel):
+    """Detailed content of one header or footer part."""
+
+    present: bool = False
+    text: str = ""
+    elements: list[HeaderFooterElementInfo] = Field(default_factory=list)
+    has_table: bool = False
+    has_image: bool = False
+
+
+class ImageAssetInfo(DFModel):
+    """An image extracted from the DOCX template."""
+
+    asset_key: str = Field(description="Unique key for this asset within the template")
+    original_rel_id: str = ""
+    content_type: str = ""
+    location: str = Field(description="header | footer | body")
+    section_index: int = 0
+    width_emu: int | None = None
+    height_emu: int | None = None
+    description: str = ""
+    is_logo: bool = Field(False, description="Heuristic: image in header/footer, small, branded")
+    blob_sha256: str = Field("", description="SHA256 hash of image data")
+    file_path: str | None = Field(None, description="Path where asset blob is cached, if any")
+
+
 class SectionInfo(DFModel):
     page_width: int
     page_height: int
@@ -190,6 +227,16 @@ class SectionInfo(DFModel):
     header_text: str = ""
     footer_text: str = ""
     has_page_number: bool = False
+    different_first_page: bool = False
+    # Detailed header/footer breakdown
+    default_header: HeaderFooterInfo = Field(default_factory=HeaderFooterInfo)
+    default_footer: HeaderFooterInfo = Field(default_factory=HeaderFooterInfo)
+    first_page_header: HeaderFooterInfo = Field(default_factory=HeaderFooterInfo)
+    first_page_footer: HeaderFooterInfo = Field(default_factory=HeaderFooterInfo)
+    even_page_header: HeaderFooterInfo = Field(default_factory=HeaderFooterInfo)
+    even_page_footer: HeaderFooterInfo = Field(default_factory=HeaderFooterInfo)
+    header_distance_emu: int | None = None
+    footer_distance_emu: int | None = None
 
 
 class DocxTemplateInfo(DFModel):
@@ -200,6 +247,12 @@ class DocxTemplateInfo(DFModel):
     table_count: int = 0
     role_style_map: dict[str, str] = Field(
         default_factory=dict, description="role (title, h1, body...) -> style name"
+    )
+    image_assets: list[ImageAssetInfo] = Field(
+        default_factory=list, description="Images extracted from the template"
+    )
+    theme_colors: dict[str, str] = Field(
+        default_factory=dict, description="Theme color slots -> hex values"
     )
 
 

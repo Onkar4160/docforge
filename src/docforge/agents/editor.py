@@ -200,7 +200,9 @@ _SECTION_LEVEL_EDIT = re.compile(
     r"\brename\s+(?:the\s+)?section\s+#?\d+\b|"
     r"\brename\s+(?:the\s+)?(?:first|second|third|\d+(?:st|nd|rd|th)?)\s+section\b|"
     r"\b(?:rename|change|update)\s+(?:the\s+)?(?:section\s+)?heading\b|"
-    r"\bchange\s+the\s+section\s+title\b",
+    r"\bchange\s+the\s+section\s+title\b|"
+    r"\b(?:rewrite|update|expand|shorten|edit|revise)\s+(?:the\s+)?(?:first|second|third|\d+(?:st|nd|rd|th)?\s+)?section\b|"
+    r"\b(?:in|for|on)\s+(?:the\s+)?(?:first|second|third|\d+(?:st|nd|rd|th)?\s+)?section\b",
     re.IGNORECASE,
 )
 
@@ -247,8 +249,8 @@ def select_section_block(section: SectionPlan, instruction: str) -> SectionBlock
 
 
 _EXACT_REPLACEMENT = re.compile(
-    r"\b(?:replace|change)\s+(?:the\s+)?(?:text|sentence|phrase|bullet|word|caption)?\s*"
-    r"(?P<old>[\"'].*?[\"'])\s+(?:with|to)\s+(?P<new>[\"'].*?[\"'])",
+    r"\b(?:replace|change|update|swap)\s+(?:the\s+)?(?:text|sentence|phrase|bullet|word|caption)?\s*"
+    r"(?P<old>[\"'].*?[\"'])\s+(?:with|to|by)\s+(?P<new>[\"'].*?[\"'])",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -294,7 +296,7 @@ def exact_section_replacement(section: SectionPlan, instruction: str) -> Section
         block_data, count = _replace_strings(block.model_dump(), old, new)
         blocks.append(type(block).model_validate(block_data))
         total_count += count
-    if total_count != 1:
+    if total_count < 1:
         return None
     return section.model_copy(update={"blocks": blocks})
 
